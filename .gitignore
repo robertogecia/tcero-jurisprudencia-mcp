@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.disjuntor_estado_tcero.json
+.disjuntor_estado_tcero.json.lock
+*.tmp
+.DS_Store
