@@ -40,7 +40,20 @@ deste servidor existir). Por isso:
   nem `veja`; o texto integral só sai com `detalhar=true` (limitado aos 5 primeiros itens da
   página, para não estourar o contexto de quem chama) ou com `obter_acordao_tcero`.
 - **Cache da resposta crua por 5 minutos**, por combinação de parâmetros — trocar de página da
-  mesma busca não rebaixa o mesmo payload de novo.
+  mesma busca não rebaixa o mesmo payload de novo. Teto de 24 entradas **e** de 48 MB.
+- **Orçamento de saída em três níveis**: ~12 mil caracteres por campo de texto, ~40 mil por
+  decisão detalhada, ~60 mil na resposta inteira de qualquer ferramenta. Todo corte é declarado
+  na saída (`[SAÍDA CORTADA …]`).
+
+Red team adversarial de 13/09/2026 (Opus, 2 requisições de rede): 21 achados, todos corrigidos
+com regressão no `--selftest` — relatório em `references/red-team-2026-09-13.md`. Os quatro
+piores: saída de até 850 mil caracteres numa busca com `detalhar=true`; parâmetro só com
+espaços virando filtro vazio (= acervo inteiro, 10 MB); estado corrompido do disjuntor
+derrubando as quatro ferramentas, inclusive o `diagnostico_ritmo_tcero`, que existe para
+explicar a falha; e a aproximação de relator escolhendo em silêncio entre os dois `FRANCISCO`
+e os quatro `SILVA` da lista real do portal. Hipóteses que só teste online resolve (semântica
+do `+` depois do encoding; formato real dos campos de vínculo/cancelamento): registradas lá,
+sem resultado inventado.
 
 ## Achados ao vivo que corrigem o que se supunha antes de testar
 
@@ -138,7 +151,10 @@ diferente do disjuntor (que reage a recusa persistente), isso cobre instabilidad
   deveria achar algo e não acha.
 - `relatores` via aproximação de nome contra `/api/busca/relatores` — se essa lista for parcial
   (parece trazer só relatores "correntes", não o histórico completo — não confirmado), um
-  relator antigo pode não ser encontrado por aproximação e a busca vai com o nome cru.
+  relator antigo pode não ser encontrado por aproximação e a busca vai com o nome cru. Desde
+  13/09/2026 a aproximação por substring só vale com **um** candidato: a lista real tem dois
+  `FRANCISCO`, quatro `SILVA` e `OMAR PIRES DIAS` ao lado de `OMAR PIRES DIAS - Substituição em
+  Vacância`, então nome ambíguo é recusado com a lista de candidatos, nunca resolvido no chute.
 - `linkArquivo` → `tcero.tc.br`: se o tribunal um dia desligar o redirect de `tce.ro.gov.br`
   sem avisar, o link já corrigido nesta ferramenta continua funcionando (aponta direto pro
   host final); se for o CONTRÁRIO (desligar `tcero.tc.br` e manter só `tce.ro.gov.br`), aí sim
