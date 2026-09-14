@@ -51,9 +51,12 @@ piores: saída de até 850 mil caracteres numa busca com `detalhar=true`; parâm
 espaços virando filtro vazio (= acervo inteiro, 10 MB); estado corrompido do disjuntor
 derrubando as quatro ferramentas, inclusive o `diagnostico_ritmo_tcero`, que existe para
 explicar a falha; e a aproximação de relator escolhendo em silêncio entre os dois `FRANCISCO`
-e os quatro `SILVA` da lista real do portal. Hipóteses que só teste online resolve (semântica
-do `+` depois do encoding; formato real dos campos de vínculo/cancelamento): registradas lá,
-sem resultado inventado.
+e os quatro `SILVA` da lista real do portal. As duas hipóteses que só teste online resolvia
+(semântica do `+` depois do encoding; formato real dos campos de vínculo/cancelamento) foram
+fechadas no mesmo dia com 6 requisições controladas — ver `references/protocolo-papyrus.md`,
+seção "Experimentos 13/09/2026, online": **`+` NÃO é AND** (é sinônimo de espaço, e o padrão é
+sempre OU), e `vinculos`/`mesmoTema`/`acordaoVinculoId` **apareceram populados de verdade**
+(formato real documentado, código corrigido, regressão no `--selftest`).
 
 ## Achados ao vivo que corrigem o que se supunha antes de testar
 
@@ -82,14 +85,21 @@ constava no briefing original desta tarefa:
    `https://tcero.tc.br/AbrirPdfConvidado/<hash>`, onde o PDF é servido de fato — confirmado
    baixando um PDF real (200, `application/pdf`, 10 páginas). Esta ferramenta já entrega o
    link corrigido, apontando direto para `tcero.tc.br`.
-6. **Cancelamento e vínculo entre acórdãos (`acordaoCanceladoId`, `vinculos`, `mesmoTema`,
-   `acordaoVinculoPai/Filho`) — capacidade nativa do portal que TJRO e TRF1 não têm pronta —
-   está implementada (a tool avisa quando algum desses campos vem preenchido), mas
-   **nenhuma das decisões reais consultadas nos testes trouxe isso populado.** Não foi
-   possível confirmar ao vivo o formato de um acórdão cancelado de verdade; tratar como
-   capacidade pronta e não testada em caso real, não como funcionalidade validada.
-7. **`situacao`** só apareceu com o valor `1` em todas as amostras. O significado de outros
-   valores não foi localizado — a ferramenta expõe o valor cru, sem inventar rótulo.
+6. **Cancelamento e vínculo entre acórdãos** — capacidade nativa do portal que TJRO e TRF1 não
+   têm pronta. Atualizado 13/09/2026 (Experimento B, N=267 decisões — ver
+   `references/protocolo-papyrus.md`): `acordaoCanceladoId`/`acordaoCancelado`/
+   `acordaoVinculoPai`/`acordaoVinculoFilho`/`acordaoMesmoTemaPai`/`revisoes` continuam **nunca
+   vistos populados**, mesmo numa amostra bem maior — tratar como capacidade pronta, sem caso
+   real. Mas **`vinculos` (33/267), `mesmoTema` (15/267) e `acordaoVinculoId` (25/267) vieram
+   populados de verdade**, com formatos bem diferentes entre si: `vinculos` é uma lista de ids
+   de decisão que **inclui o próprio id do registro** (corrigido: a ferramenta agora omite o
+   próprio id da exibição, em vez de parecer "vinculado a si mesmo"); `mesmoTema` é uma lista de
+   OBJETOS completos (não ids); `acordaoVinculoId` é um id interno do registro de vínculo do
+   portal — **não** um id de decisão (a ferramenta antes não dizia nada sobre este campo; agora
+   avisa e deixa explícito que não serve para `obter_acordao_tcero`).
+7. **`situacao`** só apareceu com o valor `1` em todas as amostras, inclusive nas 267 do
+   Experimento B de 13/09/2026. O significado de outros valores não foi localizado — a
+   ferramenta expõe o valor cru, sem inventar rótulo.
 
 ## `informacoesAdicionais` — conteúdo de IA do próprio tribunal
 
@@ -104,9 +114,12 @@ propositalmente NÃO cobre este campo — só ementa e dispositivo.
 
 Informe pelo menos um critério (`texto_livre`, `numero_acordao`, `numero_processo`, `relator`
 ou `orgao_julgador`) — sem nenhum, a chamada é recusada (evita devolver o acervo inteiro por
-engano). `texto_livre` aceita `"frase exata"` entre aspas e `+` para E/AND (confirmado ao vivo:
-`dispensa+de+licitação`); o operador `e` (OU/OR) citado na própria página do portal não foi
-testado a fundo — se o resultado não vier como esperado, tente reformular. Para relator e órgão
+engano). `texto_livre` é **sempre OU (OR)** termo a termo — confirmado ao vivo em 13/09/2026
+(ver `references/protocolo-papyrus.md`): espaço, `+` e a palavra solta `e` da instrução da
+própria página se comportam de forma IDÊNTICA entre si (todos OR), nenhum funciona como AND.
+`"frase exata"` entre aspas continua funcionando como frase exata/adjacente. Não há sintaxe
+conhecida para exigir dois termos em qualquer ordem — para isso, rode buscas separadas e cruze
+os `idDecisao`. Para relator e órgão
 julgador, use exatamente o nome/valor que o portal conhece (a tool tenta aproximar e avisa
 quando não bateu). Depois de achar o precedente certo na busca, use o **id** (`idDecisao`) para
 tudo o que vier depois — é mais direto que buscar de novo pelo número.

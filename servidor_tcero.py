@@ -318,8 +318,24 @@ def _tem_conteudo(v) -> bool:
 
 def _avisos_cancelamento_vinculo(s: dict) -> list[str]:
     """Campos nativos de cancelamento/vínculo do próprio portal — capacidade que TJRO e TRF1
-    não têm pronta. Nenhuma das decisões amostradas ao vivo trouxe isso populado (ver
-    references/protocolo-papyrus.md); a checagem fica pronta para quando aparecer um caso real."""
+    não têm pronta.
+
+    Formato real confirmado ao vivo em 13/09/2026 (Experimento B do red team, N=267 decisões,
+    ver references/protocolo-papyrus.md):
+      • `vinculos` é uma lista de INTEIROS (ids de decisão) — e é SELF-INCLUSIVE: as 33/33
+        amostras populadas incluíam o próprio `idDecisao` do registro na própria lista (é o
+        grupo de vínculo inteiro, não "outras" decisões). Mostrar a lista crua faz parecer que
+        a decisão está "vinculada a si mesma"; o próprio id é removido da exibição.
+      • `mesmoTema` é uma lista de OBJETOS completos (o mesmo schema de `source`, aninhado) —
+        nunca inclui o próprio id nas 15/267 amostras. `_resumir_vinculo` já extrai o
+        `idDecisao` de cada objeto corretamente.
+      • `acordaoVinculoId` (25/267 populado) é um ESCALAR que NÃO aparece em nenhuma lista
+        `vinculos` da amostra e não bate com nenhum `idDecisao` observado — é o id interno do
+        REGISTRO DE VÍNCULO no portal (chave de agrupamento), não um id de decisão citável em
+        `obter_acordao_tcero`. Esta função não tratava este campo (gap real, corrigido aqui).
+      • `acordaoCanceladoId`/`acordaoCancelado`/`acordaoVinculoPai`/`acordaoVinculoFilho`/
+        `acordaoMesmoTemaPai`/`revisoes`: continuam NÃO localizados populados em 267 decisões
+        (0/267) — capacidade pronta, sem caso real para confirmar o formato."""
     avisos: list[str] = []
     if _tem_conteudo(s.get("acordaoCanceladoId")) or _tem_conteudo(s.get("acordaoCancelado")):
         cancelado_id = _tem_conteudo(s.get("acordaoCanceladoId"))
@@ -328,8 +344,27 @@ def _avisos_cancelamento_vinculo(s: dict) -> list[str]:
             f"⚠️ Este acórdão consta como CANCELADO no portal (acordaoCancelado{'Id' if cancelado_id else ''}="
             f"{_resumir_vinculo(alvo)}) — não cite sem antes conferir o acórdão que o cancelou."
         )
-    if _tem_conteudo(s.get("vinculos")):
-        avisos.append(f"⚠️ Há acórdão(s) vinculado(s) a esta decisão: {_resumir_vinculo(s['vinculos'])} — confira antes de citar isoladamente.")
+    vinculos = s.get("vinculos")
+    if _tem_conteudo(vinculos):
+        proprio = s.get("idDecisao")
+        if isinstance(vinculos, (list, tuple, set)) and proprio is not None and proprio in vinculos:
+            outros = [v for v in vinculos if v != proprio]
+            if outros:
+                avisos.append(
+                    f"⚠️ Há acórdão(s) vinculado(s) a esta decisão: {_resumir_vinculo(outros)} "
+                    f"(a lista `vinculos` do portal também inclui o próprio id {proprio}, omitido "
+                    "aqui) — confira antes de citar isoladamente."
+                )
+            # outros vazio == a lista só continha o próprio id: não é vínculo de verdade, sem aviso.
+        else:
+            avisos.append(f"⚠️ Há acórdão(s) vinculado(s) a esta decisão: {_resumir_vinculo(vinculos)} — confira antes de citar isoladamente.")
+    if _tem_conteudo(s.get("acordaoVinculoId")):
+        avisos.append(
+            f"ℹ️ Portal marca um id de vínculo interno (`acordaoVinculoId`={_resumir_vinculo(s['acordaoVinculoId'])}) "
+            "— achado ao vivo 13/09/2026: isto NÃO é um id de decisão (não aceito por "
+            "obter_acordao_tcero); os ids de decisões relacionadas, quando existem, estão no "
+            "campo `vinculos` acima."
+        )
     for campo, rotulo in (("acordaoVinculoPai", "acórdão-pai"), ("acordaoVinculoFilho", "acórdão-filho")):
         if _tem_conteudo(s.get(campo)):
             avisos.append(f"ℹ️ Vínculo de {rotulo}: {_resumir_vinculo(s[campo])}.")
@@ -1157,11 +1192,28 @@ try:
         5 itens da página) ou obter_acordao_tcero para o texto integral.
 
         Args:
-            texto_livre: Busca por texto no corpo/ementa. Sintaxe do próprio portal, pouco
-                documentada: `"frase exata"` entre aspas, `+` para E (AND — ex.:
-                "dispensa+de+licitação") e a palavra solta `e` para OU (OR). Atenção ao `e`:
-                escrever "licitação e contrato" NÃO é uma busca pelos dois termos, é uma busca
-                por qualquer um deles. Teste e ajuste se o resultado não vier como esperado.
+            texto_livre: Busca por texto no corpo/ementa/informações adicionais. Semântica
+                CONFIRMADA AO VIVO em 13/09/2026 (teste real com os termos "reincidência" e
+                "direcionamento"; ver references/protocolo-papyrus.md, "Experimentos
+                13/09/2026, online" — refuta o que se supunha antes de testar): por padrão é
+                SEMPRE OU (OR), termo a termo, nunca E — `"termo1 termo2"` sem aspas devolve
+                qualquer decisão que contenha PELO MENOS UM dos termos, não os dois juntos
+                (comprovado: das 156 decisões devolvidas no teste real, 0 continham os dois
+                termos ao mesmo tempo). `+` (`"termo1+termo2"`) se comporta EXATAMENTE como
+                espaço — confirmado por comparação byte a byte de três requisições idênticas em
+                tudo menos a codificação (`%20`, `%2B` e um `+` cru na URL, que o ASP.NET
+                decodifica como espaço): as três devolveram os MESMOS 156 resultados, byte a
+                byte idênticos. A palavra solta `e` (`"termo1 e termo2"`) também NÃO é um
+                operador especial: é só mais um termo OU'd — confirmado isolando
+                `textoLivre=e` sozinho (114 resultados) e verificando que
+                `"termo1 e termo2"` devolve exatamente a união de `"termo1 termo2"` (156) com
+                `"e"` sozinho (114) = 267, sem sobra nem falta. NÃO foi encontrada nenhuma
+                sintaxe que funcione como E (AND) entre termos não-adjacentes — a única forma
+                de exigir mais de uma palavra é `"frase exata entre aspas"` (funciona:
+                comprovado por um teste com zero resultados para uma frase que os dois termos
+                nunca formam na ordem pedida). Para dois termos específicos, considere repetir
+                a busca e cruzar manualmente as decisões que aparecem nas duas, ou usar uma
+                frase entre aspas se a ordem das palavras for previsível.
             numero_acordao: Número do acórdão (ex.: "00055/26"). Pode haver mais de uma decisão
                 (id diferente) sob o mesmo número — o TCE-RO já mostrou isso ao vivo.
             numero_processo: Número do processo administrativo (ex.: "02603/22").
@@ -1342,6 +1394,26 @@ if __name__ == "__main__":
         assert "z" * 20 not in av_gordo[0] and "'ementa'" not in av_gordo[0], av_gordo[0][:200]
         av_sem_id = _avisos_cancelamento_vinculo({"vinculos": [{"texto": "y" * 900} for _ in range(40)]})
         assert len(av_sem_id[0]) < 400 and "cortada" in av_sem_id[0], (len(av_sem_id[0]), av_sem_id[0][:120])
+        # EXPERIMENTO B ONLINE, 13/09/2026 (ver scripts/experimentos-2026-09-13.py e
+        # references/protocolo-papyrus.md): sobre 267 decisões reais (busca "reincidência e
+        # direcionamento"), `vinculos` populado (33/267) é SEMPRE self-inclusive — as 33
+        # amostras traziam o próprio idDecisao dentro da própria lista. Mostrar a lista crua
+        # afirmaria que a decisão está "vinculada a si mesma". `acordaoVinculoId` (25/267)
+        # nunca aparecia dentro de `vinculos` nem batia com idDecisao nenhum da amostra — não é
+        # id de decisão, e a função antiga simplesmente não dizia nada sobre ele (gap real).
+        av_self = _avisos_cancelamento_vinculo({"idDecisao": 77649, "vinculos": [77649, 57039, 84267]})
+        assert av_self and "57039, 84267" in av_self[0] and "77649" not in av_self[0].split("também inclui")[0], av_self
+        assert "próprio id 77649" in av_self[0], av_self
+        av_so_proprio = _avisos_cancelamento_vinculo({"idDecisao": 5, "vinculos": [5]})
+        assert av_so_proprio == [], av_so_proprio  # lista só com o próprio id não é vínculo de verdade
+        av_avi = _avisos_cancelamento_vinculo({"idDecisao": 77568, "acordaoVinculoId": 18045})
+        assert av_avi and "acordaoVinculoId" in av_avi[0] and "18045" in av_avi[0] and "NÃO é um id de decisão" in av_avi[0], av_avi
+        # os 3 registros reais baixados ao vivo (fixtures/05_vinculos_reais.json)
+        d_vinc = _ler("05_vinculos_reais.json")
+        avisos_por_id = {item["source"]["idDecisao"]: _avisos_cancelamento_vinculo(item["source"]) for item in d_vinc["result"]}
+        assert avisos_por_id[80049] and "mesmo tema" in avisos_por_id[80049][0] and "80054" in avisos_por_id[80049][0], avisos_por_id[80049]
+        assert avisos_por_id[77649] and "57039, 84267" in avisos_por_id[77649][0], avisos_por_id[77649]
+        assert len(avisos_por_id[77568]) == 2 and "18045" in avisos_por_id[77568][1], avisos_por_id[77568]
         # resolver_orgao (sem rede)
         nome_o, aviso_o = _resolver_orgao("pleno")
         assert nome_o == "Pleno" and aviso_o is None, (nome_o, aviso_o)

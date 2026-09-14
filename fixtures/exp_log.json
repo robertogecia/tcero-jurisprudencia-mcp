@@ -1,0 +1,44 @@
+[
+  {
+    "rotulo": "A1_espaco_pct20",
+    "url": "https://papyrus.tcero.tc.br/api/espelho/buscar?textoLivre=reincid%C3%AAncia%20direcionamento",
+    "status_code": 200,
+    "bytes": 2558607,
+    "segundos": 0.784
+  },
+  {
+    "rotulo": "A2_mais_pct2B",
+    "url": "https://papyrus.tcero.tc.br/api/espelho/buscar?textoLivre=reincid%C3%AAncia%2Bdirecionamento",
+    "status_code": 200,
+    "bytes": 2558607,
+    "segundos": 0.264
+  },
+  {
+    "rotulo": "A3_mais_CRU_controle",
+    "url": "https://papyrus.tcero.tc.br/api/espelho/buscar?textoLivre=reincid%C3%AAncia+direcionamento",
+    "status_code": 200,
+    "bytes": 2558607,
+    "segundos": 0.294
+  },
+  {
+    "rotulo": "A4_frase_exata",
+    "url": "https://papyrus.tcero.tc.br/api/espelho/buscar?textoLivre=%22reincid%C3%AAncia%20direcionamento%22",
+    "status_code": 200,
+    "bytes": 36,
+    "segundos": 0.075
+  },
+  {
+    "rotulo": "A5_operador_e",
+    "url": "https://papyrus.tcero.tc.br/api/espelho/buscar?textoLivre=reincid%C3%AAncia%20e%20direcionamento",
+    "status_code": 200,
+    "bytes": 3438665,
+    "segundos": 0.399
+  },
+  {
+    "rotulo": "A6_isolar_e_sozinho",
+    "url": "https://papyrus.tcero.tc.br/api/espelho/buscar?textoLivre=e",
+    "status_code": 200,
+    "bytes": 895102,
+    "segundos": 1.798
+  }
+]
