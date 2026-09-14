@@ -14,7 +14,7 @@ que se supunha antes de testar) em `references/protocolo-papyrus.md`; respostas 
 
 | Tool | O que faz |
 |---|---|
-| `buscar_jurisprudencia_tcero` | busca por texto livre e/ou por número de acórdão, número de processo, relator ou órgão julgador; paginação **no cliente** (a API do portal não pagina no servidor); resumo compacto por padrão, `detalhar=true` para os primeiros itens da página |
+| `buscar_jurisprudencia_tcero` | busca por texto livre e/ou por número de acórdão, número de processo, relator ou órgão julgador; `grupos` (E entre grupos, OU dentro do grupo) filtra por 2+ conceitos — o E é feito **no cliente**, porque o portal só sabe fazer OU e ordena por data, não por relevância; paginação **no cliente** (a API do portal não pagina no servidor); resumo compacto por padrão, `detalhar=true` para os primeiros itens da página |
 | `obter_acordao_tcero` | detalhe completo de uma decisão — ementa integral, dispositivo (`acordaoDescricao`), informações adicionais (⚠️ geradas por IA pelo DEJUR do próprio tribunal), legislação aplicada, link do PDF do inteiro teor; prefira `id_decisao` (busca direta, resposta pequena) |
 | `verificar_citacao_tcero` | confere se um trecho aparece literalmente na ementa ou no dispositivo antes de ir entre aspas — `[...]` separa fragmentos, ❌ vem com o que não bateu |
 | `diagnostico_ritmo_tcero` | estado do disjuntor/limitador, sem rede |
@@ -126,14 +126,37 @@ em duas rodadas (ver `references/protocolo-papyrus.md`): espaço, `+`, a palavra
 `AND`/`+termo` literais (o que o frontend do portal manda de verdade no lugar de `e` — lido no
 bundle `/js/app-busca.js` e confirmado ao vivo) se comportam de forma IDÊNTICA entre si (todos
 OR); nenhum funciona como AND. `"frase exata"` entre aspas continua funcionando como frase
-exata/adjacente. Não há sintaxe conhecida para exigir dois termos em qualquer ordem — para
-isso, rode buscas separadas e cruze os `idDecisao`. `numero_acordao`/`numero_processo` aceitam
+exata/adjacente. Não há sintaxe NATIVA do portal para exigir dois conceitos em qualquer
+ordem — para isso use o parâmetro `grupos` (ver seção dedicada logo abaixo), que faz o E no
+cliente. `numero_acordao`/`numero_processo` aceitam
 o número sem zero-preenchimento (`"55/26"`) — esta ferramenta completa para 8 caracteres
 sozinha, como o frontend do portal faz, porque sem isso o portal devolve zero resultados
 silenciosamente. Para relator e órgão
 julgador, use exatamente o nome/valor que o portal conhece (a tool tenta aproximar e avisa
 quando não bateu). Depois de achar o precedente certo na busca, use o **id** (`idDecisao`) para
 tudo o que vier depois — é mais direto que buscar de novo pelo número.
+
+## Ordem dos resultados e por que `grupos` é no cliente
+
+Achado offline, 13/09/2026, sobre uma resposta real de 1.141 decisões
+(`fixtures/exp_C2_controle_or.json`, busca "reincidência multa"): o portal **ordena por
+`dataSessao` decrescente**, não por relevância. Das 61 decisões que continham "reincidência" E
+"multa" ao mesmo tempo, só **1 estava entre as 10 primeiras** da resposta e só **4 entre as 50
+primeiras** — o resto (57 de 61) estava espalhado no meio de mais de mil decisões que só tinham
+UM dos dois termos. Um agente que lê só a primeira página de uma busca de dois conceitos está,
+na prática, lendo ruído.
+
+Como o motor do portal não implementa nenhum operador booleano (ver "Como pesquisar bem" acima)
+e a API já devolve o array inteiro da consulta (não pagina no servidor), o parâmetro `grupos`
+resolve isso **no cliente**: manda ao portal um OU de todas as palavras de todos os grupos
+(recall máximo, uma requisição só) e depois mantém, do array já baixado, só as decisões em que
+CADA grupo tem pelo menos um termo presente — antes de paginar. O cabeçalho da resposta mostra
+os dois números: "N no portal (OU nativo) → M após exigir todos os grupos". Casamento: fold de
+caixa/acento, sobre ementa + dispositivo + informações adicionais; termo com espaço casa como
+frase, termo de uma palavra casa por substring com fronteira de palavra à ESQUERDA (pega
+"multas"/"multada", não pega "tumulto" nem "multirreincidência"). Quando o único casamento de
+um grupo foi nas informações adicionais (texto de apoio gerado com IA pelo DEJUR, não o texto
+do acórdão), a ferramenta avisa isso por decisão.
 
 ## Instalação (pessoal)
 

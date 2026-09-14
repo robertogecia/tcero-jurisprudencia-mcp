@@ -331,6 +331,54 @@ que o site "engana" o usuário — implica que o próprio backend do TCE-RO não
 marcadores como operadores, então o comportamento acaba sendo o mesmo (OR) para quem digita
 "termo1 e termo2" no site ou manda `"termo1 termo2"` direto pela API.
 
+## Ordem dos resultados e por que `grupos` é no cliente
+
+Achado offline, 13/09/2026, sobre `fixtures/exp_C2_controle_or.json` (a mesma resposta real de
+1.141 decisões do Experimento C, busca nativa "reincidência multa"): **o portal ordena por
+`dataSessao` decrescente, não por relevância**. Confirmado por leitura direta do array — os
+primeiros 15 itens vêm em ordem estritamente não-crescente de `dataSessao` (22/06 → 15/06 →
+… → 27/04/2026).
+
+Consequência prática, medida sobre os mesmos dados: das **61** decisões que continham
+"reincidência" E "multa" ao mesmo tempo (substring simples, sem fronteira de palavra — a
+contagem "oficial" do filtro implementado é 59, ver abaixo), só **1 estava entre as 10
+primeiras** posições da resposta nativa e só **4 entre as 50 primeiras**. Ou seja: o OU nativo
+do portal, combinado com a ordenação cronológica, **esconde exatamente o que um E de verdade
+encontraria** — um agente que lê só a primeira página de uma busca de dois conceitos está lendo
+majoritariamente ruído (decisões com só UM dos dois termos).
+
+Como a API já devolve o array COMPLETO da consulta (não pagina no servidor — ver "Estrutura da
+resposta" acima) e o portal não implementa nenhum operador booleano (Experimentos A e C, acima),
+a solução ficou óbvia: **fazer o E no cliente**, sem gastar requisição extra. Implementado como
+o parâmetro `grupos` de `buscar_jurisprudencia_tcero` (mesmo vocabulário de `grupos` no
+`tjro_jurisprudencia`/`trf1_jurisprudencia`: dentro do grupo é OU, entre grupos é E):
+
+1. A ferramenta manda ao portal um `textoLivre` com TODAS as palavras de TODOS os grupos, soltas
+   e sem aspas (`_montar_texto_livre_com_grupos`) — maximiza o recall nativo (é tudo OU mesmo).
+2. Filtra o array já baixado (`_filtrar_por_grupos`), mantendo só as decisões em que CADA grupo
+   tem pelo menos um termo presente, em ementa + dispositivo (`acordaoDescricao`, HTML limpo) ou
+   informações adicionais (`_campos_casamento`/`_termo_casa`/`_decisao_casa_grupos`) — nunca
+   muta os dicts cacheados (mesma disciplina já auditada pelo red team para o resto do módulo).
+3. Pagina o resultado FILTRADO, não o bruto; o cabeçalho mostra os dois números.
+
+**Critério de casamento e por que a contagem "oficial" é 59, não 61**: termo com espaço casa
+como frase (substring direto); termo de uma palavra casa por substring com fronteira de palavra
+só à ESQUERDA (regex `\btermo`). A contagem informal de 61 (citada acima, no Experimento A/C)
+usava um radical truncado ("reincidenc") sem fronteira de palavra nenhuma — isso casava também
+com **"reincidente"** (palavra diferente — nunca contém a string "reincidência" como substring)
+e com **"multirreincidência"** (contém "reincidência" como substring, mas SEM começar numa
+fronteira de palavra — é outra palavra, não o termo pesquisado). Os 4 ids que saem do conjunto
+com o critério correto (81.969, 84.690, 84.681, 95.941) foram inspecionados manualmente um a um
+— todos caem exatamente nesses dois casos, nenhum é uma ocorrência real de "reincidência"
+perdida pelo filtro. **59 é o número correto**; 61 era contagem grosseira de um script de
+análise ad hoc, não do código do servidor.
+
+Também confirmado: 14 das 59 decisões só bateram um dos dois grupos nas informações adicionais
+(texto de apoio gerado com IA pelo DEJUR) — nunca na ementa nem no dispositivo — e a ferramenta
+avisa isso por decisão (ex.: `idDecisao` 96429, grupo "multa" só em informações adicionais;
+`idDecisao` 94915, grupo "reincidência" só em informações adicionais). Regressão completa (com
+estes ids reais) no `--selftest`, usando os fixtures já existentes — nenhuma requisição nova.
+
 ## Resumo do que diverge do briefing original
 
 1. `relatores` pede o **nome exato**, não o `id` de `/api/busca/relatores` (o id não serve
@@ -359,3 +407,8 @@ marcadores como operadores, então o comportamento acaba sendo o mesmo (OR) para
    confirmado ao vivo: sem esse preenchimento, o mesmo acórdão que existe devolve ZERO
    resultados, silenciosamente (Experimento C, 13/09/2026). Corrigido nesta ferramenta
    (`_padronizar_numero`).
+9. O portal ordena por `dataSessao` decrescente, não por relevância — descoberta offline,
+   13/09/2026, sobre uma resposta real de 1.141 decisões: das 61 que continham dois termos ao
+   mesmo tempo, só 1 estava nas 10 primeiras posições e só 4 nas 50 primeiras. Isso motivou o
+   parâmetro `grupos` (E entre grupos, OU dentro do grupo), implementado no CLIENTE — ver seção
+   dedicada "Ordem dos resultados e por que `grupos` é no cliente" acima.
