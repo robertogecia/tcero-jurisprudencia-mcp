@@ -232,6 +232,9 @@ def _html_para_texto(txt: str) -> str:
     if not txt:
         return ""
     t = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", txt)
+    # Quebra de linha no HTML-fonte é só espaço (visto ao vivo em 14/09/2026: `veja` com
+    # "Lei \r\nde Introdução" no meio de um <a>); só tag de bloco vira '\n'.
+    t = re.sub(r"[\r\n]+", " ", t)
     t = re.sub(r"(?i)<br\s*/?>|</p>|</div>|</li>|</h\d>|</tr>", "\n", t)
     t = re.sub(r"(?i)<li[^>]*>", "- ", t)
     t = re.sub(r"<[^>]+>", " ", t)
