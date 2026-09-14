@@ -53,10 +53,17 @@ derrubando as quatro ferramentas, inclusive o `diagnostico_ritmo_tcero`, que exi
 explicar a falha; e a aproximação de relator escolhendo em silêncio entre os dois `FRANCISCO`
 e os quatro `SILVA` da lista real do portal. As duas hipóteses que só teste online resolvia
 (semântica do `+` depois do encoding; formato real dos campos de vínculo/cancelamento) foram
-fechadas no mesmo dia com 6 requisições controladas — ver `references/protocolo-papyrus.md`,
-seção "Experimentos 13/09/2026, online": **`+` NÃO é AND** (é sinônimo de espaço, e o padrão é
-sempre OU), e `vinculos`/`mesmoTema`/`acordaoVinculoId` **apareceram populados de verdade**
-(formato real documentado, código corrigido, regressão no `--selftest`).
+fechadas no mesmo dia, em duas rodadas (10 requisições controladas no total — a 2ª depois de
+uma leitura do bundle do frontend apontar uma variável não controlada na 1ª) — ver
+`references/protocolo-papyrus.md`, seção "Experimentos 13/09/2026, online": **não existe AND
+funcional em `textoLivre`** — nem `+`, nem `e`/`E`, nem o `AND` literal que o frontend realmente
+manda no lugar de `e` (confirmado lendo `/js/app-busca.js` e testando ao vivo: `AND` e `+termo`
+devolvem resultado byte a byte idêntico ao controle sem operador) — tudo é sinônimo de OU;
+`vinculos`/`mesmoTema`/`acordaoVinculoId` **apareceram populados de verdade** (formato real
+documentado, código corrigido); e o frontend zero-preenche `numeroAcordao`/`numeroProcesso`
+para 8 caracteres antes de mandar (`"55/26"` → `"00055/26"`) — sem isso o portal devolve zero
+silenciosamente, confirmado ao vivo e agora replicado nesta ferramenta. Regressão no
+`--selftest` para os três.
 
 ## Achados ao vivo que corrigem o que se supunha antes de testar
 
@@ -114,12 +121,16 @@ propositalmente NÃO cobre este campo — só ementa e dispositivo.
 
 Informe pelo menos um critério (`texto_livre`, `numero_acordao`, `numero_processo`, `relator`
 ou `orgao_julgador`) — sem nenhum, a chamada é recusada (evita devolver o acervo inteiro por
-engano). `texto_livre` é **sempre OU (OR)** termo a termo — confirmado ao vivo em 13/09/2026
-(ver `references/protocolo-papyrus.md`): espaço, `+` e a palavra solta `e` da instrução da
-própria página se comportam de forma IDÊNTICA entre si (todos OR), nenhum funciona como AND.
-`"frase exata"` entre aspas continua funcionando como frase exata/adjacente. Não há sintaxe
-conhecida para exigir dois termos em qualquer ordem — para isso, rode buscas separadas e cruze
-os `idDecisao`. Para relator e órgão
+engano). `texto_livre` é **sempre OU (OR)** termo a termo — confirmado ao vivo em 13/09/2026,
+em duas rodadas (ver `references/protocolo-papyrus.md`): espaço, `+`, a palavra solta `e` e até
+`AND`/`+termo` literais (o que o frontend do portal manda de verdade no lugar de `e` — lido no
+bundle `/js/app-busca.js` e confirmado ao vivo) se comportam de forma IDÊNTICA entre si (todos
+OR); nenhum funciona como AND. `"frase exata"` entre aspas continua funcionando como frase
+exata/adjacente. Não há sintaxe conhecida para exigir dois termos em qualquer ordem — para
+isso, rode buscas separadas e cruze os `idDecisao`. `numero_acordao`/`numero_processo` aceitam
+o número sem zero-preenchimento (`"55/26"`) — esta ferramenta completa para 8 caracteres
+sozinha, como o frontend do portal faz, porque sem isso o portal devolve zero resultados
+silenciosamente. Para relator e órgão
 julgador, use exatamente o nome/valor que o portal conhece (a tool tenta aproximar e avisa
 quando não bateu). Depois de achar o precedente certo na busca, use o **id** (`idDecisao`) para
 tudo o que vier depois — é mais direto que buscar de novo pelo número.

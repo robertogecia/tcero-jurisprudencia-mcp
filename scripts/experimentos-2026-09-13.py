@@ -129,6 +129,41 @@ def experimento_b(forcar_termo_comum: str | None = None) -> None:
     _log("Experimento B concluído (1 requisição).")
 
 
+def experimento_c() -> None:
+    """4 requisições — SEGUNDA RODADA, 13/09/2026, depois de achar em /tmp/app-busca.js que o
+    FRONTEND converte ' e '/' ou ' para ' AND '/' OR ' ANTES de mandar (Experimento A testou o
+    " e " cru, que o motor nunca recebe assim quando alguém usa o site). Par de termos com
+    coocorrência REAL confirmada offline no fixture A1 (56/156 decisões têm as duas palavras):
+    "reincidência" (já usado) e "multa" (aparece ao lado de "REINCIDÊNCIA" na própria primeira
+    ementa amostrada, fixtures/01_busca_numeroProcesso.json).
+
+    C1: `reincidência AND multa` (literal, maiúsculo, espaços — o que o bundle realmente produz)
+    C2: `reincidência multa` (controle OU — mesmo par, para comparar com C1 sem viés de termos)
+    C3: `reincidência +multa` (espaço, depois `+multa` colado, `+` → `%2B` como o axios faria —
+        sintaxe de "obrigatório" de query_string/Lucene, distinta do `+` sem espaço testado em A)
+    C4: `numeroAcordao=55/26` SEM padding (frontend faz `.padStart(8, '0')` → "00055/26" antes de
+        mandar; testa se o servidor bruto trata os dois de forma diferente)
+
+    (d) `reincidência OR multa` foi DELIBERADAMENTE OMITIDO para caber no orçamento de 4: o
+    Experimento A já provou que o padrão sem operador já É OR, então "OR" explícito tem baixo
+    valor marginal frente a confirmar a hipótese DISTINTA do padStart (C4)."""
+    t1 = quote(TERMO1, safe="")
+    t2 = "multa"
+    consultas = [
+        ("C1_and_literal", f"{ENDPOINT_BUSCAR}?textoLivre={t1}%20AND%20{t2}"),
+        ("C2_controle_or", f"{ENDPOINT_BUSCAR}?textoLivre={t1}%20{t2}"),
+        ("C3_mais_obrigatorio", f"{ENDPOINT_BUSCAR}?textoLivre={t1}%20%2B{t2}"),
+        ("C4_numeroAcordao_sem_padding", f"{ENDPOINT_BUSCAR}?numeroAcordao=55%2F26"),
+    ]
+    metas = []
+    for i, (rotulo, url) in enumerate(consultas):
+        if i > 0:
+            time.sleep(ESPACAMENTO_S)
+        metas.append(_pedir(url, rotulo))
+    _registrar_meta(metas)
+    _log("Experimento C concluído (4 requisições). Inspecione fixtures/exp_C*.json antes de analisar.")
+
+
 if __name__ == "__main__":
     fase = sys.argv[1] if len(sys.argv) > 1 else ""
     if fase == "A":
@@ -138,5 +173,7 @@ if __name__ == "__main__":
     elif fase == "B":
         termo = sys.argv[2] if len(sys.argv) > 2 else None
         experimento_b(termo)
+    elif fase == "C":
+        experimento_c()
     else:
-        sys.exit("uso: experimentos-2026-09-13.py A | B [termo_comum_opcional]")
+        sys.exit("uso: experimentos-2026-09-13.py A | B [termo_comum_opcional] | C")
