@@ -15,7 +15,7 @@ que se supunha antes de testar) em `references/protocolo-papyrus.md`; respostas 
 | Tool | O que faz |
 |---|---|
 | `buscar_jurisprudencia_tcero` | busca por texto livre e/ou por número de acórdão, número de processo, relator ou órgão julgador; `grupos` (E entre grupos, OU dentro do grupo) filtra por 2+ conceitos — o E é feito **no cliente**, porque o portal só sabe fazer OU e ordena por data, não por relevância; paginação **no cliente** (a API do portal não pagina no servidor); resumo compacto por padrão (já com o link do PDF de cada item, corrigido para o host atual), `detalhar=true` para os primeiros itens da página |
-| `obter_acordao_tcero` | detalhe completo de uma decisão — ementa integral, dispositivo (`acordaoDescricao`), informações adicionais (⚠️ geradas por IA pelo DEJUR do próprio tribunal), legislação aplicada, link do PDF do inteiro teor; prefira `id_decisao` (busca direta, resposta pequena) |
+| `obter_acordao_tcero` | detalhe completo de uma decisão — ementa integral, dispositivo (`acordaoDescricao`), informações adicionais (⚠️ geradas por IA pelo DEJUR do próprio tribunal), legislação aplicada, link do PDF do inteiro teor; prefira `id_decisao` (busca direta, resposta pequena); `ler_inteiro_teor=true` baixa esse PDF e EXTRAI O TEXTO REAL (relatório + voto, não só ementa/dispositivo) — ver seção dedicada abaixo |
 | `verificar_citacao_tcero` | confere se um trecho aparece literalmente na ementa ou no dispositivo antes de ir entre aspas — `[...]` separa fragmentos, ❌ vem com o que não bateu |
 | `diagnostico_ritmo_tcero` | estado do disjuntor/limitador, sem rede |
 
@@ -117,6 +117,73 @@ junto do conteúdo. **Nunca tratar como fonte primária isolada**: confira sempr
 ementa/dispositivo e, quando possível, o inteiro teor em PDF. `verificar_citacao_tcero`
 propositalmente NÃO cobre este campo — só ementa e dispositivo.
 
+## Leitura do inteiro teor em PDF — 14/09/2026
+
+`obter_acordao_tcero(..., ler_inteiro_teor=true)` baixa o PDF do `linkArquivo` (já corrigido
+para `tcero.tc.br`) e **extrai o texto real com PyMuPDF (`fitz`)** — relatório e voto completos,
+não só a ementa/dispositivo que a API JSON já trazia. É uma capacidade que os servidores irmãos
+não têm: o **TRF1 desiste de propósito** porque o inteiro teor lá fica atrás de um desafio
+Cloudflare; aqui não há esse obstáculo — confirmado ao vivo, o mesmo `linkArquivo` que a busca
+já devolve baixa **sem login, sem cookie, sem JavaScript** (é só um GET).
+
+### Como funciona
+
+1. Pega o `linkArquivo` da primeira decisão encontrada (mesma que o detalhe normal já mostra),
+   já corrigido para `tcero.tc.br`.
+2. Baixa o PDF com o mesmo `User-Agent` identificável do resto deste servidor, mas **sem usar o
+   disjuntor compartilhado da API de busca** — é outro host, e misturar os dois orçamentos
+   bloquearia a busca de jurisprudência por causa de downloads de PDF, sem motivo real. Em vez
+   disso, um espaçamento mínimo próprio de 3s e um lock em memória (moderação básica, suficiente
+   porque cada chamada é uma decisão específica do agente, nunca um laço sobre uma página
+   inteira de resultados).
+3. Extrai o texto com PyMuPDF. Corte sempre dito explicitamente, num teto de ~45 mil caracteres
+   (`ORCAMENTO_PDF`) — maior que qualquer outro campo deste servidor porque é o documento
+   inteiro, mas ainda finito; o teto de ~60 mil da resposta INTEIRA (`ORCAMENTO_SAIDA`) continua
+   valendo por cima e pode cortar dentro do PDF se o resto do detalhe já estiver grande.
+4. Cacheia o texto extraído por 1h, por `id_decisao` (ou hash do link, se faltar id) — pedir de
+   novo o mesmo acórdão na mesma sessão não baixa o PDF outra vez.
+
+### PDF sem camada de texto (digitalização/imagem)
+
+Se a extração devolver texto vazio ou quase vazio (menos de ~30 caracteres não-espaço por
+página, em média), a ferramenta **não finge que leu**: diz explicitamente "PDF sem texto
+extraível (provável digitalização) — inteiro teor não pôde ser lido automaticamente; abra o
+link no navegador" e a saída NÃO ganha a linha `Verificação: "inteiro teor lido (PDF)"`. Não
+faz OCR de propósito — já testado antes em processo grande (382 páginas) e não valeu a pena
+(lento, ainda falhava em PDF com texto digital). Falha de rede ao baixar (timeout, 404, 5xx)
+também não vira "não encontrado": vira `[LEITURA DE PDF NÃO REALIZADA — motivo]`, porque a
+decisão existe — só a leitura automática do PDF falhou.
+
+### Semântica de `verificacao` — categoria nova
+
+Quando a extração tem sucesso e traz texto substancial, a saída inclui explicitamente a linha
+`Verificação: "inteiro teor lido (PDF)"` — categoria **mais forte** que "só ementa/dispositivo"
+(o que este servidor sempre devolveu até agora) porque é a primeira vez que ele consegue ler o
+julgado inteiro sem intervenção humana no navegador. Isto é o campo `verificacao` que a ficha de
+precedente usa (`pesquisador-juridico`/`segundo-cerebro`) — só escrever essa frase depois desta
+ferramenta ter de fato devolvido essa linha, nunca por conta própria.
+
+### Exemplo real (id 98114, APL-TC 00055/26, 14/09/2026)
+
+A ementa tem 3.491 caracteres. O PDF (24 páginas, 781.830 bytes) extraiu **69.140 caracteres**
+de texto real — quase 20× mais — incluindo o RELATÓRIO ("Trata-se de processo autuado para
+análise do Pregão Eletrônico n. 11/CIMCERO/2021...") e o VOTO ("VOTO CONSELHEIRO JOSÉ EULER
+POTYGUARA PEREIRA DE MELLO... cinge-se o objeto da presente deliberação à análise do
+cumprimento do item II do Acórdão APL-TC 00035/24...") — nenhum dos dois está na ementa, que é
+só o resumo. Outros 3 PDFs reais testados no mesmo levantamento (ids 96141, 85572, 77649; 6 a 36
+páginas) confirmam o padrão: o inteiro teor sempre traz muito mais do que ementa+dispositivo, e
+em todos os 4 o texto extraído continha as palavras estruturais "RELATÓRIO"/"VOTO" que a ementa
+nunca tem. Fixtures reais em `fixtures/pdf/*.pdf`, regressão completa no `--selftest`.
+
+### Por que NÃO existe em `buscar_jurisprudencia_tcero`
+
+Decisão deliberada, não esquecimento: `detalhar=true` já tem teto de 5 itens por página porque
+é caro; `ler_inteiro_teor` seria mais caro ainda (download real de PDF, não só formatação).
+Numa busca paginada, aplicar isso a vários itens de uma vez viraria uma avalanche de downloads
+de PDF numa única chamada — exatamente o tipo de rajada que a moderação de rede deste projeto
+proíbe. Em `obter_acordao_tcero`, ao contrário, cada chamada já é uma decisão específica do
+agente sobre UM acórdão por vez — o lugar certo para este parâmetro.
+
 ## Como pesquisar bem
 
 Informe pelo menos um critério (`texto_livre`, `numero_acordao`, `numero_processo`, `relator`
@@ -162,8 +229,9 @@ do acórdão), a ferramenta avisa isso por decisão.
 
 ```bash
 cd ~/MCP/tcero-jurisprudencia
-python3 -m venv .venv && .venv/bin/pip install "mcp[cli]>=1.4.0,<2" "httpx>=0.27" "truststore>=0.9"
+python3 -m venv .venv && .venv/bin/pip install "mcp[cli]>=1.4.0,<2" "httpx>=0.27" "truststore>=0.9" "pymupdf>=1.24"
 # mcp<2 de propósito: o 2.x renomeou FastMCP → MCPServer (o registro das tools falha em silêncio)
+# pymupdf (fitz): extração de texto do inteiro teor em PDF, ver obter_acordao_tcero(ler_inteiro_teor=true)
 .venv/bin/python servidor_tcero.py --selftest            # offline, contra os fixtures
 .venv/bin/python servidor_tcero.py --selftest --online   # + operações reais (poucas, moderado)
 ```

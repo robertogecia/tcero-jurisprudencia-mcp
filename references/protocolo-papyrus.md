@@ -379,6 +379,81 @@ avisa isso por decisão (ex.: `idDecisao` 96429, grupo "multa" só em informaç�
 `idDecisao` 94915, grupo "reincidência" só em informações adicionais). Regressão completa (com
 estes ids reais) no `--selftest`, usando os fixtures já existentes — nenhuma requisição nova.
 
+## Leitura do inteiro teor em PDF — 14/09/2026
+
+Capacidade nova, pedida pelo usuário ("deveria o resultado das pesquisas voltar [...] com todo
+o julgado, não só a ementa"): `obter_acordao_tcero(..., ler_inteiro_teor=true)` baixa o
+`linkArquivo` (já corrigido para `tcero.tc.br` — ver achado 5 acima) e extrai o texto real com
+PyMuPDF (`fitz`). Diferente do TRF1, que desiste de propósito porque o inteiro teor lá fica
+atrás de um desafio Cloudflare: aqui o mesmo link que a busca já devolve baixa **sem login, sem
+cookie, sem JavaScript** — confirmado ao vivo baixando 5 PDFs reais em 13-14/09/2026 (o 6º
+achado de 13/09 já tinha confirmado isto para 1 PDF; agora confirmado para mais 4, mais 1 ponta
+a ponta pelo próprio `--selftest --online`).
+
+### 4 PDFs baixados para fixtures (`fixtures/pdf/*.pdf`), 14/09/2026
+
+Espaçados ≥3,5s, mesmo `HEADERS_BASE` do servidor, todos HTTP 200:
+
+| id | sigla | páginas | bytes PDF | tempo | chars extraídos | chars da ementa |
+|---|---|---|---|---|---|---|
+| 98114 | APL-TC 00055/26 | 24 | 781.830 | 1,46s | 69.140 | 3.491 |
+| 96141 | AC1-TC 00055/26 | 6 | 488.028 | 0,44s | 14.409 | 780 |
+| 85572 | APL-TC 00035/24 | 33 | 538.981 | 0,36s | 95.026 | 1.370 |
+| 77649 | APL-TC 00127/22 | 36 | 761.891 | 0,49s | 127.460 | 1.638 |
+
+Um 5º download real (mesmo id 98114, via `--selftest --online`) confirmou a ponta a ponta —
+total de 5 dos 6 downloads do orçamento de rede desta tarefa, 1 em reserva.
+
+**Prova de que a extração é real, não ilusão de já ter esse conteúdo**: em TODOS os 4 PDFs, o
+texto extraído contém as palavras estruturais "RELATÓRIO" e "VOTO" — nenhuma das duas aparece
+na `ementa` correspondente (que é só o resumo padronizado). Trecho real do id 98114 (RELATÓRIO,
+ausente da ementa): *"Trata-se de processo autuado para análise do Pregão Eletrônico n.
+11/CIMCERO/2021, cujo objeto é a formação de registro de preços [...]"*; trecho do VOTO
+(também ausente): *"VOTO CONSELHEIRO JOSÉ EULER POTYGUARA PEREIRA DE MELLO [...] cinge-se o
+objeto da presente deliberação à análise do cumprimento do item II do Acórdão APL-TC
+00035/24..."*. A razão entre chars extraídos e chars da ementa varia de ~18× (96141) a ~78×
+(77649) — o PDF sempre traz muito mais do que a API JSON expõe hoje.
+
+### Detecção de PDF sem texto (digitalização) — sem caso real, testado sinteticamente
+
+Nenhum dos 4 PDFs reais baixados veio sem camada de texto (todos são nativos, gerados
+digitalmente pelo sistema do TCE-RO — "DP-SPJ" no rodapé de cada página). A detecção de
+"PDF sem texto extraível" (limiar: `LIMIAR_CHARS_POR_PAGINA` = 30 caracteres não-espaço por
+página, em média) foi testada com um PDF sintético gerado em memória com o próprio `fitz`
+(página em branco, sem `insert_text`) — sem gastar nenhum download do orçamento de rede. Não
+faz OCR: já testado antes em processo grande (382 páginas, ver
+`docling-nao-vale-pena-processo-grande` na memória do usuário) e não valeu a pena — lento e
+ainda falhava em PDF com texto digital.
+
+### Orçamento de caracteres (`ORCAMENTO_PDF` = 45.000)
+
+Maior que `ORCAMENTO_DETALHE` (40.000) porque o PDF é o documento inteiro (relatório+voto+
+ementa+dispositivo), não um campo isolado — mas ainda finito: o maior PDF real testado (id
+77649, 36 páginas) já extraiu 127.460 caracteres, quase 3× o teto. `ORCAMENTO_SAIDA` (60.000)
+continua valendo por cima — se o detalhe da decisão já estiver grande, o corte final ainda pode
+cortar dentro do PDF, e isso é dito explicitamente (mesmo padrão de `_cortar_bloco` para o resto
+do arquivo).
+
+### Cache e rede
+
+Texto extraído cacheado por 1h por `id_decisao` (TTL bem maior que o da busca, 5min — o inteiro
+teor de um acórdão não muda). Download do PDF usa `tcero.tc.br`, um host DIFERENTE de
+`papyrus.tcero.tc.br` (API de busca) — não compartilha o disjuntor da API, só um espaçamento
+mínimo próprio de 3s e um lock em memória, para não bloquear a busca de jurisprudência por
+causa de um PDF. Teto de 20 MB por PDF (checado por `Content-Length` e também durante o
+streaming, caso o header falte ou minta) — nenhum dos 4 PDFs reais chegou perto (todos < 800 KB).
+
+### Por que NÃO estender a mesma capacidade a `buscar_jurisprudencia_tcero`
+
+Decisão deliberada: `detalhar=true` já tem teto de 5 itens por página porque É caro (embute
+ementa+dispositivo+informações integrais). `ler_inteiro_teor` seria mais caro ainda — download
+real de um arquivo de terceiro, não só formatação de texto já em memória. Numa busca paginada
+com `por_pagina` até 50, aplicar isso a vários itens de uma vez viraria uma avalanche de N
+downloads de PDF numa única chamada — exatamente a rajada que a moderação de rede deste
+projeto (e o `feedback-subagent-runaway-spawning` da memória do usuário, por analogia) existe
+para evitar. Em `obter_acordao_tcero`, cada chamada já é uma decisão específica do agente sobre
+UM acórdão por vez — o lugar certo para este parâmetro, sem esse risco.
+
 ## Resumo do que diverge do briefing original
 
 1. `relatores` pede o **nome exato**, não o `id` de `/api/busca/relatores` (o id não serve
