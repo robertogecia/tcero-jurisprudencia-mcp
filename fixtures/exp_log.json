@@ -40,5 +40,33 @@
     "status_code": 200,
     "bytes": 895102,
     "segundos": 1.798
+  },
+  {
+    "rotulo": "C1_and_literal",
+    "url": "https://papyrus.tcero.tc.br/api/espelho/buscar?textoLivre=reincid%C3%AAncia%20AND%20multa",
+    "status_code": 200,
+    "bytes": 20142444,
+    "segundos": 2.794
+  },
+  {
+    "rotulo": "C2_controle_or",
+    "url": "https://papyrus.tcero.tc.br/api/espelho/buscar?textoLivre=reincid%C3%AAncia%20multa",
+    "status_code": 200,
+    "bytes": 20142444,
+    "segundos": 1.656
+  },
+  {
+    "rotulo": "C3_mais_obrigatorio",
+    "url": "https://papyrus.tcero.tc.br/api/espelho/buscar?textoLivre=reincid%C3%AAncia%20%2Bmulta",
+    "status_code": 200,
+    "bytes": 20142444,
+    "segundos": 1.451
+  },
+  {
+    "rotulo": "C4_numeroAcordao_sem_padding",
+    "url": "https://papyrus.tcero.tc.br/api/espelho/buscar?numeroAcordao=55%2F26",
+    "status_code": 200,
+    "bytes": 36,
+    "segundos": 0.089
   }
 ]

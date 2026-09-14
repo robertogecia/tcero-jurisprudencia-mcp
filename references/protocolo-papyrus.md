@@ -16,9 +16,9 @@ ou o portal devolve o acervo inteiro):
 
 | Parâmetro | O que faz | Confirmado ao vivo |
 |---|---|---|
-| `textoLivre` | Busca por texto livre (ementa/corpo/informações adicionais). SEMPRE OU (OR) termo a termo — espaço, `+` e a palavra `e` são idênticos entre si; `"frase exata"` entre aspas funciona como frase exata. Ver "Experimentos 13/09/2026, online" abaixo — **refuta** a hipótese original de que `+` seria AND | **sim, integralmente confirmado** — 6 requisições, 13/09/2026 ~23:22-23:25 |
-| `numeroAcordao` | Busca pelo número do acórdão (ex.: `00055/26`) | sim — pode devolver MAIS de um `idDecisao` para o MESMO número (3 decisões distintas sob `00055/26` no teste) |
-| `numeroProcesso` | Busca pelo número do processo administrativo (ex.: `02603/22`) | sim |
+| `textoLivre` | Busca por texto livre (ementa/corpo/informações adicionais). SEMPRE OU (OR) termo a termo — espaço, `+`, a palavra `e` e até `AND`/`+termo` literais (o que o frontend realmente manda) são todos idênticos entre si; `"frase exata"` entre aspas funciona como frase exata. Ver "Experimentos 13/09/2026, online" abaixo — **refuta** a hipótese original de que `+` seria AND | **sim, integralmente confirmado, em duas rodadas** — 10 requisições, 13/09/2026 |
+| `numeroAcordao` | Busca pelo número do acórdão (ex.: `00055/26`). **Precisa vir zero-preenchido para 8 caracteres** — o frontend faz `.padStart(8, '0')` antes de mandar; sem isso (`55/26`) o portal devolve zero, silenciosamente | sim — pode devolver MAIS de um `idDecisao` para o MESMO número (3 decisões distintas sob `00055/26` no teste); padding confirmado ao vivo em 13/09/2026 (Experimento C) |
+| `numeroProcesso` | Busca pelo número do processo administrativo (ex.: `02603/22`). Mesmo zero-preenchimento de 8 caracteres do `numeroAcordao` (inferido do bundle, não testado isoladamente) | sim, quanto à busca em si; o padding foi confirmado só para `numeroAcordao` (Experimento C) — para `numeroProcesso` é inferência por simetria do mesmo trecho do bundle |
 | `relatores` | Filtro por relator — **precisa do NOME EXATO**, não do id | sim, com ressalva importante abaixo |
 | `orgaosJulgadores` | Filtro por órgão julgador — **precisa do valor EXATO** de uma lista fechada de 3 | sim, com ressalva abaixo |
 | `IdDecisao` (maiúsculas assim mesmo) + `filtrarResultados=false` | Busca DIRETA por id da decisão — devolve exatamente 1 resultado, resposta pequena (13 KB) | sim — achado que NÃO estava no briefing original; é o endpoint certo para `obter_acordao_tcero` |
@@ -143,13 +143,16 @@ do que este servidor precisa.
 
 ## Experimentos 13/09/2026, online
 
-Fecha os dois pontos que o red team de `references/red-team-2026-09-13.md` deixou como
-`[NÃO TESTADO]`. Script reprodutível: `scripts/experimentos-2026-09-13.py`. Respostas cruas em
+Fecha os pontos que o red team de `references/red-team-2026-09-13.md` deixou como
+`[NÃO TESTADO]`, em duas rodadas no mesmo dia (a segunda depois de uma leitura do bundle do
+frontend, `/js/app-busca.js`, apontar uma variável que a primeira rodada não tinha controlado).
+Script reprodutível: `scripts/experimentos-2026-09-13.py`. Respostas cruas em
 `fixtures/exp_*.json` (e `fixtures/exp_log.json` com bytes/tempo de cada requisição) e
 `fixtures/05_vinculos_reais.json` (3 registros reais extraídos, usados em regressão do
-`--selftest`). **6 requisições ao portal, todas HTTP 200, espaçadas ≥5 s, nunca em rajada,
-mesmo `User-Agent` do servidor de produção (`HEADERS_BASE`, importado direto de
-`servidor_tcero.py`, não duplicado).**
+`--selftest`). **10 requisições ao portal no total (6 na 1ª rodada — Experimentos A e B — mais
+4 na 2ª — Experimento C), todas HTTP 200, espaçadas ≥5 s, nunca em rajada, mesmo `User-Agent`
+do servidor de produção (`HEADERS_BASE`, importado direto de `servidor_tcero.py`, não
+duplicado).**
 
 ### Experimento A — semântica de `textoLivre`
 
@@ -200,6 +203,15 @@ antes de escolher). 5 requisições, mesmo par de termos, 5 sintaxes:
   precisar de interseção real, a forma prática hoje é rodar duas buscas separadas e cruzar os
   `idDecisao` manualmente (é exatamente o que este experimento fez para provar o ponto).
 
+> **⚠️ RESSALVA adicionada depois, mesmo dia — ver "Experimento C" abaixo.** O teste acima usou
+> a palavra `e` **crua**, entre espaços. Descobriu-se depois (leitura de
+> `/js/app-busca.js`, o bundle do frontend) que **o site nunca manda esse `e` cru**: ele
+> converte ` e `/` E ` → ` AND ` e ` ou `/` OU ` → ` OR ` no navegador, ANTES de chamar a API.
+> O Experimento C testou o que o site realmente manda (`AND` literal, `+termo` com espaço) e o
+> resultado foi o MESMO: nem `AND` nem `+termo` mudam a resposta. A conclusão de que **não há
+> AND** continua de pé — só o caminho para chegar lá mudou (o `e` cru nunca foi o que importava;
+> o que importa é que `AND`/`+termo`, o que o site de fato manda, também não funcionam).
+
 ### Experimento B — campos nunca vistos populados
 
 Reaproveitada a maior resposta do Experimento A (A5, 267 decisões, "reincidência e
@@ -248,6 +260,77 @@ perto do timeout de 45 s — mas isto **não** é uma medição direta da hipót
 não há indício de risco, mas não foi medido um payload de fato próximo de 10 MB neste
 levantamento — **[NÃO TESTADO DIRETAMENTE]**, só inferido por escala.
 
+### Experimento C — o que o frontend REALMENTE manda (segunda rodada, mesmo dia)
+
+Motivado por leitura de `/js/app-busca.js` (bundle do frontend do portal, baixado em
+`/tmp/app-busca.js`): confirmado por grep no próprio arquivo (não só inferido) que:
+
+```js
+operadores: { 'e': 'AND', 'ou': 'OR' }
+// _prepararTextoLivreParaConsulta(textoLivre): para cada operador,
+// textoLivre.replace(new RegExp("\\s(e|E)\\s", 'g'), " AND ") — e o mesmo para "ou"/"OU" → " OR "
+```
+
+e que `numeroAcordao`/`numeroProcesso` passam por `.padStart(8, '0')` antes de `axios.get`. Ou
+seja: o Experimento A testou `" e "` **cru**, que o site nunca manda — o site sempre converte
+para `" AND "` antes. Isto pedia um teste novo com o que o site de fato envia.
+
+Par de termos trocado para um com coocorrência REAL (o par anterior, "reincidência"/
+"direcionamento", tinha coocorrência ZERO — não serve para testar se AND intersecta): consegui
+por leitura offline do fixture A1 que **56 das 156 decisões já baixadas continham as duas
+palavras "reincidência" E "multa"** juntas — "multa" escolhida por aparecer ao lado de
+"REINCIDÊNCIA" já na primeira ementa amostrada em `fixtures/01_busca_numeroProcesso.json`.
+4 requisições (orçamento desta rodada: até 4):
+
+| # | rótulo | URL (textoLivre / numeroAcordao) | HTTP | bytes | tempo | resultados |
+|---|---|---|---|---|---|---|
+| C1 | AND literal | `reincid%C3%AAncia%20AND%20multa` | 200 | 20.142.444 | 2,79 s | 1.141 |
+| C2 | controle OU | `reincid%C3%AAncia%20multa` | 200 | 20.142.444 | 1,66 s | 1.141 |
+| C3 | `+termo` obrigatório | `reincid%C3%AAncia%20%2Bmulta` (espaço, depois `+multa` colado) | 200 | 20.142.444 | 1,45 s | 1.141 |
+| C4 | padStart | `numeroAcordao=55%2F26` (SEM padding) | 200 | 36 | 0,09 s | 0 |
+
+⚠️ **"multa" acabou sendo um termo muito mais comum do que o esperado** (>15 MB nas 3
+primeiras) — a escolha de par "individualmente estreito" falhou aqui; registrado para não
+repetir consultas desta amplitude, conforme a regra do orçamento. Não invalida a conclusão
+(ver abaixo) — na verdade a reforça, porque a diferença de tamanho entre "reincidência"
+(129 ocorrências) e "multa" (1.069 ocorrências) tornaria uma interseção real (61) claramente
+menor e distinguível de uma união (1.141); não houve distinção nenhuma.
+
+**Conclusões:**
+
+- **C1 = C2 = C3, byte a byte, idênticos** (mesmos 1.141 `idDecisao`, mesma ordem). Nem `AND`
+  literal maiúsculo nem `+multa` (sintaxe "obrigatório" de motores estilo Elasticsearch/Lucene,
+  `+` colado ao termo, com espaço antes) mudaram o resultado em NADA — nem um id a mais, nem um
+  a menos, em relação ao controle sem operador nenhum.
+- Por leitura (sobre C1, 1.141 decisões): 129 contêm "reincidência", 1.069 contêm "multa", **61
+  contêm as duas** — essa seria a interseção real, se AND funcionasse. Como o resultado teve
+  1.141 (a união, idêntica a C2), fica provado que **`AND` foi tratado como se não estivesse na
+  consulta** (nenhuma decisão adicional apareceu por conter a palavra "AND" — 0/1.141 continham
+  o token "AND" literalmente, o que faz sentido: é uma palavra inglesa rara em ementas em
+  português).
+- **C4 confirma o `padStart` do frontend por necessidade, não só por leitura do bundle**:
+  `numeroAcordao=55/26` (sem zero-preenchimento) devolveu `{"result": []}` — 36 bytes, ZERO
+  decisões — para o MESMO acórdão que `numeroAcordao=00055/26` (com padding) sempre devolveu
+  desde os fixtures originais (`fixtures/02_busca_numeroAcordao.json`). Sem o padding, o portal
+  não erra nem avisa — devolve silenciosamente um conjunto vazio, indistinguível de "não existe
+  jurisprudência". Corrigido em `_padronizar_numero` (código), aplicado a `numero_acordao` e
+  `numero_processo` nas três ferramentas que os usam.
+- **`(d) "termo1 OR termo2"` explícito foi deliberadamente OMITIDO** desta rodada para caber no
+  orçamento de 4: o Experimento A já provou por dois caminhos diferentes que o padrão sem
+  operador nenhum já é OR (união), então testar a palavra `OR` explícita tinha baixo valor
+  marginal frente à hipótese distinta do `padStart` (C4). Se algum dia for preciso, a
+  expectativa (não testada) é que `OR` se comporte como `AND` se comportou aqui — token inerte,
+  idêntico ao controle — mas isto é **inferência por simetria, não resultado observado**.
+
+**Conclusão final, juntando Experimento A e C**: o portal ePapyrus **não implementa nenhum
+operador booleano conhecido** em `textoLivre` — nem a sintaxe que o site converte (`e`/`E`,
+nunca usada de fato) nem a sintaxe crua que a conversão produz (`AND`, `+termo`). Tudo em
+`textoLivre` é OU (união) por padrão, e a única forma confirmada de restringir por mais de uma
+palavra é a frase exata entre aspas (adjacência + ordem, não interseção livre). **Não** implica
+que o site "engana" o usuário — implica que o próprio backend do TCE-RO não trata esses
+marcadores como operadores, então o comportamento acaba sendo o mesmo (OR) para quem digita
+"termo1 e termo2" no site ou manda `"termo1 termo2"` direto pela API.
+
 ## Resumo do que diverge do briefing original
 
 1. `relatores` pede o **nome exato**, não o `id` de `/api/busca/relatores` (o id não serve
@@ -264,7 +347,15 @@ levantamento — **[NÃO TESTADO DIRETAMENTE]**, só inferido por escala.
    implementada, sem caso real. `vinculos`, `mesmoTema` e `acordaoVinculoId`, por outro lado,
    **foram confirmados populados e com formato real conhecido** (Experimento B) — ver seção
    dedicada acima.
-7. `textoLivre` é **sempre OU (OR)** termo a termo — `+`, espaço e a palavra `e` são idênticos
-   entre si; não existe AND encontrado; aspas fazem frase exata. Isto **contradiz** o que o
-   briefing original (e a própria página do portal) sugeriam sobre `+` = AND (Experimento A,
-   13/09/2026, 6 requisições — ver seção dedicada acima).
+7. `textoLivre` é **sempre OU (OR)** termo a termo — `+`, espaço, a palavra `e` e até o `AND`
+   literal (o que o frontend realmente manda no lugar de `e`, confirmado lendo
+   `/js/app-busca.js`) são todos idênticos entre si; `+termo` (sintaxe "obrigatório" de
+   Elasticsearch/Lucene) também não muda nada. Não existe AND funcional encontrado — só a
+   frase exata entre aspas restringe por mais de uma palavra. Isto **contradiz** o que o
+   briefing original (e a própria página do portal) sugeriam (Experimento A + C, 13/09/2026,
+   10 requisições no total — ver seções dedicadas acima).
+8. O frontend zero-preenche `numeroAcordao`/`numeroProcesso` para 8 caracteres
+   (`.padStart(8, '0')`, ex.: "55/26" → "00055/26") ANTES de mandar — achado no bundle e
+   confirmado ao vivo: sem esse preenchimento, o mesmo acórdão que existe devolve ZERO
+   resultados, silenciosamente (Experimento C, 13/09/2026). Corrigido nesta ferramenta
+   (`_padronizar_numero`).

@@ -177,6 +177,30 @@ def _texto(v) -> str:
     return (v if isinstance(v, str) else ("" if v is None else str(v))).strip()
 
 
+_RE_NUMERO_ACORDAO_PROCESSO = re.compile(r"^\d+/\d+$")
+
+
+def _padronizar_numero(v: str) -> str:
+    """Espelha o `numeroAcordao.padStart(8, '0')` / `numeroProcesso.padStart(8, '0')` que o
+    FRONTEND do portal (`/js/app-busca.js`) aplica antes de mandar a requisição — achado ao
+    vivo, 13/09/2026 (coordenador leu o bundle; confirmado por requisição real neste servidor:
+    `numeroAcordao=55/26` SEM padding devolveu **zero** resultados via
+    `GET /api/espelho/buscar?numeroAcordao=55%2F26` — o mesmo acórdão só aparece quando
+    zero-preenchido para 8 caracteres, `00055/26`, como em `fixtures/02_busca_numeroAcordao.json`
+    e agora também em `fixtures/exp_C4_numeroAcordao_sem_padding.json`). Este servidor não fazia
+    esse padding — um usuário (ou um agente) digitando "55/26" recebia silenciosamente ZERO
+    resultados, sem nenhum aviso de que era um problema de formatação, não de acervo.
+
+    Só aplica quando o valor tem a cara do formato N/AA (dígitos, uma barra, dígitos) e é mais
+    curto que 8 caracteres — mais restrito que o frontend (que faz `padStart` cego em qualquer
+    string não vazia): este servidor aceita texto livre de um agente, não só o que sai de um
+    campo de formulário mascarado, então não vale a pena arriscar zero-preencher algo que não
+    tem essa forma."""
+    if v and len(v) < 8 and _RE_NUMERO_ACORDAO_PROCESSO.match(v):
+        return v.rjust(8, "0")
+    return v
+
+
 _RE_MD_CABECALHO = re.compile(r"(?m)^(\s{0,3})(#{1,6}\s)")
 _RE_MD_REGRA = re.compile(r"(?m)^(\s{0,3})([-*_]{3,}\s*)$")
 
@@ -964,9 +988,9 @@ async def _buscar(texto_livre: str | None, numero_acordao: str | None, numero_pr
     if _texto(texto_livre):
         params["textoLivre"] = _texto(texto_livre)
     if _texto(numero_acordao):
-        params["numeroAcordao"] = _texto(numero_acordao)
+        params["numeroAcordao"] = _padronizar_numero(_texto(numero_acordao))
     if _texto(numero_processo):
-        params["numeroProcesso"] = _texto(numero_processo)
+        params["numeroProcesso"] = _padronizar_numero(_texto(numero_processo))
     try:
         if not params and not _texto(relator) and not _texto(orgao_julgador):
             return ("Informe pelo menos um critério: texto_livre, numero_acordao, numero_processo, "
@@ -1062,9 +1086,9 @@ async def _obter_acordao(id_decisao: int | str | None, numero_acordao: str | Non
         else:
             params = {}
             if ac_txt:
-                params["numeroAcordao"] = ac_txt
+                params["numeroAcordao"] = _padronizar_numero(ac_txt)
             if proc_txt:
-                params["numeroProcesso"] = proc_txt
+                params["numeroProcesso"] = _padronizar_numero(proc_txt)
             dados = await _consultar_api(params, "detalhe")
     except (ValueError, RuntimeError, PortalRecusou) as e:
         return f"Erro na consulta ao TCE-RO: {e}"
@@ -1112,7 +1136,7 @@ async def _verificar_citacao(id_decisao: int | str | None, numero_acordao: str |
         if id_txt:
             dados = await _consultar_api({"IdDecisao": id_txt, "filtrarResultados": "false"}, "verificacao")
         else:
-            dados = await _consultar_api({"numeroAcordao": ac_txt}, "verificacao")
+            dados = await _consultar_api({"numeroAcordao": _padronizar_numero(ac_txt)}, "verificacao")
     except (ValueError, RuntimeError, PortalRecusou) as e:
         return f"Erro na consulta ao TCE-RO: {e}"
     except Exception as e:
@@ -1214,9 +1238,31 @@ try:
                 nunca formam na ordem pedida). Para dois termos específicos, considere repetir
                 a busca e cruzar manualmente as decisões que aparecem nas duas, ou usar uma
                 frase entre aspas se a ordem das palavras for previsível.
-            numero_acordao: Número do acórdão (ex.: "00055/26"). Pode haver mais de uma decisão
-                (id diferente) sob o mesmo número — o TCE-RO já mostrou isso ao vivo.
-            numero_processo: Número do processo administrativo (ex.: "02603/22").
+
+                SEGUNDA RODADA, mesmo dia: o frontend do portal (bundle `/js/app-busca.js`)
+                converte ` e `/` E ` → ` AND ` e ` ou `/` OU ` → ` OR ` ANTES de mandar a
+                requisição — então o teste acima usou " e " cru, que o site nunca manda de
+                verdade. Testado ao vivo o que o site REALMENTE manda: `"termo1 AND termo2"`
+                (maiúsculo, literal) e `"termo1 +termo2"` (com espaço antes do `+`, sintaxe de
+                "obrigatório" de motores estilo Elasticsearch/Lucene) — resultado: **byte a
+                byte IDÊNTICOS** ao controle sem operador nenhum (`"termo1 termo2"`), com os
+                termos "reincidência"/"multa" (1.141 resultados nos três casos, mesmos ids, na
+                mesma ordem). Ou seja: **nem o `AND` nem o `+termo` alteram o resultado — o
+                motor os ignora como se não estivessem lá** (não reduzem para a interseção, que
+                nesta amostra seria bem menor: só 61 das 1.141 decisões continham as duas
+                palavras). Conclusão final, juntando as duas rodadas: **o portal não tem
+                nenhuma forma conhecida de AND** — nem a sintaxe que o site converte (`e`/`E`
+                sem uso) nem a sintaxe crua que ela produz (`AND`, `+termo`). A única forma
+                confirmada de restringir por mais de uma palavra continua sendo a frase exata
+                entre aspas.
+            numero_acordao: Número do acórdão (ex.: "00055/26" ou "55/26" — esta ferramenta
+                zero-preenche para 8 caracteres sozinha quando o formato é N/AA, espelhando o
+                que o próprio frontend do portal faz antes de mandar; confirmado ao vivo em
+                13/09/2026 que SEM esse preenchimento o portal devolve zero resultados para um
+                acórdão que existe). Pode haver mais de uma decisão (id diferente) sob o mesmo
+                número — o TCE-RO já mostrou isso ao vivo.
+            numero_processo: Número do processo administrativo (ex.: "02603/22" ou "2603/22" —
+                mesmo zero-preenchimento automático do numero_acordao).
             relator: Nome do relator. A API exige o NOME EXATO (sem tolerância a abreviação ou
                 substring, confirmado ao vivo) — se vier zero resultado, confira grafia e acento;
                 esta ferramenta tenta aproximar pela lista de /api/busca/relatores antes de
@@ -1352,6 +1398,19 @@ if __name__ == "__main__":
         assert _corrigir_link_pdf("https://outro.dominio/x") == "https://outro.dominio/x"
         assert _truncar("a" * 100, 10).endswith("…") and len(_truncar("a" * 100, 10)) <= 11
         assert _truncar("curto", 100) == "curto"
+        # SEGUNDA RODADA ONLINE, 13/09/2026 (coordenador leu /js/app-busca.js: o frontend faz
+        # numeroAcordao.padStart(8, '0') / numeroProcesso.padStart(8, '0') antes de mandar).
+        # Confirmado ao vivo: numeroAcordao=55/26 SEM padding devolveu ZERO resultados
+        # (fixtures/exp_C4_numeroAcordao_sem_padding.json); o mesmo acórdão só existe como
+        # "00055/26" (fixtures/02_busca_numeroAcordao.json). Este servidor não fazia esse
+        # padding antes — corrigido em _padronizar_numero.
+        assert _padronizar_numero("55/26") == "00055/26", _padronizar_numero("55/26")
+        assert _padronizar_numero("00055/26") == "00055/26"  # já tem 8: padStart não altera
+        assert _padronizar_numero("123456789/26") == "123456789/26"  # já mais longo: intocado
+        assert _padronizar_numero("") == ""
+        assert _padronizar_numero("abc") == "abc"  # não tem a cara de N/AA: não mexe
+        assert _padronizar_numero("55") == "55"  # sem barra: fora do formato N/AA, não mexe
+        assert _padronizar_numero("1/2") == "000001/2", _padronizar_numero("1/2")
         html_txt = _html_para_texto("<p>Item <b>um</b>.</p><ul><li>a</li><li>b</li></ul>&nbsp;fim")
         assert "Item um" in html_txt and "- a" in html_txt and "- b" in html_txt and "<" not in html_txt, html_txt
         assert _html_para_texto("") == ""
