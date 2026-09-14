@@ -13,9 +13,13 @@ para o levantamento completo). Diferença importante em relação aos irmãos: a
 sessão/ViewState (TRF1) nem desafio anti-robô (TJRO) para contornar — é uma API JSON simples.
 
 Expõe quatro ferramentas ao Claude:
-  • buscar_jurisprudencia_tcero — busca livre e/ou por campo, paginação NO CLIENTE (a API do
-                                  portal devolve tudo de uma vez, sem paginar no servidor),
-                                  resumo compacto por padrão
+  • buscar_jurisprudencia_tcero — busca livre e/ou por campo; `grupos` (E entre grupos, OU
+                                  dentro do grupo) filtra por 2+ conceitos NO CLIENTE — o portal
+                                  só sabe fazer OU e ordena por data, não por relevância
+                                  (achado 13/09/2026: só 1 de 61 decisões relevantes nas 10
+                                  primeiras posições de uma busca real); paginação também NO
+                                  CLIENTE (a API do portal devolve tudo de uma vez, sem paginar
+                                  no servidor), resumo compacto por padrão
   • obter_acordao_tcero         — detalhe completo de uma decisão (ementa integral, dispositivo,
                                   informações adicionais geradas por IA pelo DEJUR, legislação,
                                   link do inteiro teor em PDF)
@@ -553,6 +557,128 @@ def _verificar_trecho(textos: dict[str, str], trecho: str) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# `grupos` — E entre grupos, OU dentro do grupo, filtrado NO CLIENTE          #
+# (achado 13/09/2026, offline, sobre fixtures/exp_C2_controle_or.json: o      #
+# portal só sabe fazer OU e ordena por dataSessao decrescente — das 61        #
+# decisões reais que continham "reincidência" E "multa" ao mesmo tempo,       #
+# só 1 aparecia entre as 10 primeiras da resposta e só 4 entre as 50          #
+# primeiras. Como a API já devolve o array COMPLETO da consulta (não pagina   #
+# no servidor — ver cabeçalho do arquivo), o E entre conceitos dá pra fazer   #
+# aqui, sem gastar requisição extra: pede tudo com OU nativo (recall máximo)  #
+# e filtra o array já baixado antes de paginar. Mesmo vocabulário dos irmãos  #
+# TJRO/TRF1: grupo = lista de sinônimos (OU), grupos se somam (E).)           #
+# --------------------------------------------------------------------------- #
+GRUPOS_MAX = 6
+TERMOS_POR_GRUPO_MAX = 12
+
+_RE_ESPACO = re.compile(r"\s+")
+
+
+def _grupos_validos(grupos: list[list[str]] | None) -> list[list[str]]:
+    """Normaliza `grupos`: só listas de listas, só termos não-vazios, com os mesmos tetos dos
+    irmãos (GRUPOS_MAX grupos × TERMOS_POR_GRUPO_MAX termos). Grupo sem nenhum termo válido é
+    descartado (não vira um E vazio que casaria com tudo)."""
+    if not grupos or not isinstance(grupos, list):
+        return []
+    saida: list[list[str]] = []
+    for g in grupos[:GRUPOS_MAX]:
+        if not isinstance(g, list):
+            continue
+        termos = [_texto(str(t)) for t in g[:TERMOS_POR_GRUPO_MAX]]
+        termos = [t for t in termos if t]
+        if termos:
+            saida.append(termos)
+    return saida
+
+
+def _montar_texto_livre_com_grupos(texto_livre: str, grupos: list[list[str]]) -> str:
+    """`textoLivre` mandado ao portal: a sintaxe crua de `texto_livre` (se houver, preservada
+    como o usuário escreveu — pode ter aspas de frase exata, por exemplo) seguida de TODAS as
+    palavras de TODOS os termos de TODOS os grupos, soltas e sem aspas (deduplicadas por
+    `_fold`). Palavras soltas, não termos inteiros entre aspas: como o portal só sabe unir por
+    OU (Experimentos A e C, 13/09/2026), mandar cada termo como frase exata SÓ restringiria o
+    recall nativo sem ganhar nada — quem garante a frase exata é o filtro no cliente, depois.
+    Isto maximiza o conjunto baixado (recall), e o E de verdade acontece em `_filtrar_grupos`."""
+    partes: list[str] = []
+    tl = _texto(texto_livre)
+    if tl:
+        partes.append(tl)
+    vistos: set[str] = set()
+    palavras: list[str] = []
+    for grupo in grupos:
+        for termo in grupo:
+            for palavra in _RE_ESPACO.split(termo):
+                if not palavra:
+                    continue
+                chave = _fold(palavra)
+                if chave and chave not in vistos:
+                    vistos.add(chave)
+                    palavras.append(palavra)
+    if palavras:
+        partes.append(" ".join(palavras))
+    return " ".join(partes)
+
+
+def _campos_casamento(s: dict) -> tuple[str, str]:
+    """(núcleo, informações adicionais) — núcleo = ementa + dispositivo (`acordaoDescricao`,
+    HTML limpo), o texto que o próprio TCE-RO redigiu; separado de `informacoesAdicionais`
+    (texto gerado com apoio de IA pelo DEJUR) para que o casamento possa avisar quando um grupo
+    só bateu no campo de IA, nunca no texto oficial da decisão."""
+    nucleo = _fold((s.get("ementa") or "") + " " + _html_para_texto(s.get("acordaoDescricao") or ""))
+    ia = _fold(_html_para_texto(s.get("informacoesAdicionais") or ""))
+    return _RE_ESPACO.sub(" ", nucleo).strip(), _RE_ESPACO.sub(" ", ia).strip()
+
+
+def _termo_casa(texto_norm: str, termo: str) -> bool:
+    """Termo com espaço = frase (substring direta, ordem/adjacência exigidas, mesmo critério de
+    `_verificar_trecho`); termo simples = substring com fronteira de palavra à ESQUERDA só —
+    `\\bmulta` casa "multa" e "multas" (sufixo livre, § plural/flexão), mas não "tumulto" (não
+    começa em fronteira de palavra)."""
+    t = _fold(termo).strip()
+    if not t:
+        return False
+    if " " in t:
+        return _RE_ESPACO.sub(" ", t) in texto_norm
+    return re.search(r"\b" + re.escape(t), texto_norm) is not None
+
+
+def _decisao_casa_grupos(s: dict, grupos: list[list[str]]) -> tuple[bool, list[int]]:
+    """Exige que CADA grupo tenha pelo menos um termo presente (E entre grupos, OU dentro do
+    grupo). Devolve (casou_tudo, índices dos grupos cujo ÚNICO casamento foi em
+    `informacoesAdicionais`) — a lista fica vazia quando o grupo casou no núcleo (ementa/
+    dispositivo) ou quando `casou_tudo` é False (não interessa mais onde bateu)."""
+    nucleo, ia = _campos_casamento(s)
+    grupos_so_ia: list[int] = []
+    for i, grupo in enumerate(grupos):
+        if any(_termo_casa(nucleo, t) for t in grupo):
+            continue
+        if any(_termo_casa(ia, t) for t in grupo):
+            grupos_so_ia.append(i)
+            continue
+        return False, []
+    return True, grupos_so_ia
+
+
+def _filtrar_por_grupos(resultados: list[dict], grupos: list[list[str]]) -> tuple[list[dict], dict[Any, list[int]]]:
+    """Filtra a lista `result` já baixada (NUNCA muta os dicts — só lê `source`, mesma
+    disciplina já auditada no red team de 13/09/2026 para `_resumo_item`/`_detalhe_item`, que
+    também só leem). Devolve os itens que casam TODOS os grupos, na mesma ordem em que vieram
+    (cronológica, do portal), mais um mapa idDecisao -> grupos que só bateram em
+    informações adicionais, para o aviso no resumo/detalhe."""
+    filtrados: list[dict] = []
+    avisos_ia: dict[Any, list[int]] = {}
+    for item in resultados:
+        s = item.get("source") or {}
+        ok, so_ia = _decisao_casa_grupos(s, grupos)
+        if not ok:
+            continue
+        filtrados.append(item)
+        if so_ia:
+            avisos_ia[s.get("idDecisao")] = so_ia
+    return filtrados, avisos_ia
+
+
+# --------------------------------------------------------------------------- #
 # Controle de ritmo — disjuntor em arquivo, compartilhado entre processos      #
 # (mesmo padrão de TJRO/TRF1: cada sessão do Claude sobe seu próprio processo  #
 # deste servidor; estado em arquivo sob trava para todos dividirem o mesmo     #
@@ -981,20 +1107,23 @@ def _resolver_orgao(orgao: str) -> tuple[str, str | None]:
 # --------------------------------------------------------------------------- #
 async def _buscar(texto_livre: str | None, numero_acordao: str | None, numero_processo: str | None,
                   relator: str | None, orgao_julgador: str | None, pagina: int, por_pagina: int,
-                  detalhar: bool) -> str:
+                  detalhar: bool, grupos: list[list[str]] | None = None) -> str:
     avisos: list[str] = []
     filtros_nao_resolvidos: list[str] = []
+    grupos_ok = _grupos_validos(grupos)
     params: dict[str, str] = {}
-    if _texto(texto_livre):
-        params["textoLivre"] = _texto(texto_livre)
+    texto_livre_combinado = _montar_texto_livre_com_grupos(texto_livre, grupos_ok)
+    if texto_livre_combinado:
+        params["textoLivre"] = texto_livre_combinado
     if _texto(numero_acordao):
         params["numeroAcordao"] = _padronizar_numero(_texto(numero_acordao))
     if _texto(numero_processo):
         params["numeroProcesso"] = _padronizar_numero(_texto(numero_processo))
     try:
         if not params and not _texto(relator) and not _texto(orgao_julgador):
-            return ("Informe pelo menos um critério: texto_livre, numero_acordao, numero_processo, "
-                    "relator ou orgao_julgador. Uma busca sem nenhum filtro devolveria o acervo inteiro.")
+            return ("Informe pelo menos um critério: texto_livre, grupos, numero_acordao, "
+                    "numero_processo, relator ou orgao_julgador. Uma busca sem nenhum filtro "
+                    "devolveria o acervo inteiro.")
         # Validação de paginação ANTES de qualquer rede: resolver o relator custa uma
         # requisição a /api/busca/relatores, e com por_pagina inválido ela era gasta à toa
         # (red team 13/09/2026, achado 15).
@@ -1025,23 +1154,40 @@ async def _buscar(texto_livre: str | None, numero_acordao: str | None, numero_pr
     except Exception as e:
         return f"Erro ao consultar o portal do TCE-RO ({type(e).__name__}): {e}"
 
-    todos = dados.get("result") or []
+    # `dados["result"]` é lido, nunca mutado, aqui e em _filtrar_por_grupos — mesma disciplina
+    # já auditada no red team de 13/09/2026 para o restante da camada de formatação; o array
+    # cacheado por _consultar_api tem de sobreviver intacto para a próxima página/consulta.
+    todos_brutos = dados.get("result") or []
+    avisos_ia_por_id: dict[Any, list[int]] = {}
+    if grupos_ok:
+        total_bruto = len(todos_brutos)
+        todos, avisos_ia_por_id = _filtrar_por_grupos(todos_brutos, grupos_ok)
+    else:
+        total_bruto = None
+        todos = todos_brutos
     total = len(todos)
     inicio = (pagina - 1) * por_pagina
     pagina_itens = todos[inicio: inicio + por_pagina]
     total_paginas = max(1, -(-total // por_pagina)) if total else 1
 
     linhas: list[str] = []
-    filtros_txt = "; ".join(f"{k}={v}" for k, v in params.items())
-    cab = f"**{total} decisão(ões)** no portal ePapyrus/TCE-RO para `{filtros_txt}` · página {pagina}/{total_paginas} ({por_pagina} por página)"
+    filtros_txt = _truncar("; ".join(f"{k}={v}" for k, v in params.items()), 300)
+    if grupos_ok:
+        cab = (
+            f"**{total_bruto} decisão(ões)** no portal ePapyrus/TCE-RO (OU nativo) para "
+            f"`{filtros_txt}` → **{total}** após exigir todos os {len(grupos_ok)} grupo(s) · "
+            f"página {pagina}/{total_paginas} ({por_pagina} por página)"
+        )
+    else:
+        cab = f"**{total} decisão(ões)** no portal ePapyrus/TCE-RO para `{filtros_txt}` · página {pagina}/{total_paginas} ({por_pagina} por página)"
     linhas.append(cab)
     for a in avisos:
         linhas.append(f"⚠️ {a}")
-    if total > 200 and pagina == 1:
+    if (total_bruto if grupos_ok else total) > 200 and pagina == 1:
         linhas.append(
             "Dica: total alto — a API do TCE-RO não pagina no servidor (tudo já foi baixado e "
             "cacheado aqui por alguns minutos); restrinja com número de processo/acórdão, "
-            "relator ou órgão julgador para uma busca mais direta."
+            "relator, órgão julgador ou `grupos` para uma busca mais direta."
         )
     if total == 0 and filtros_nao_resolvidos:
         # Zero com filtro que a ferramenta NÃO conseguiu casar contra a lista fechada do portal
@@ -1055,7 +1201,15 @@ async def _buscar(texto_livre: str | None, numero_acordao: str | None, numero_pr
         )
         return "\n".join(linhas)
     if not pagina_itens:
-        linhas.append("\nNenhuma decisão nesta página." + (" A busca casa palavras/valores; confira grafia, acentuação e se o total acima é 0." if total == 0 else " A página pedida está além do fim."))
+        if total == 0 and grupos_ok and total_bruto:
+            linhas.append(
+                f"\nNenhuma decisão casou TODOS os {len(grupos_ok)} grupo(s) exigido(s) — havia "
+                f"{total_bruto} decisão(ões) no portal via OU nativo (qualquer termo de qualquer "
+                "grupo). Considere adicionar sinônimos a um grupo, remover um grupo, ou revisar "
+                "manualmente com texto_livre solto (sem grupos)."
+            )
+        else:
+            linhas.append("\nNenhuma decisão nesta página." + (" A busca casa palavras/valores; confira grafia, acentuação e se o total acima é 0." if total == 0 else " A página pedida está além do fim."))
         return "\n".join(linhas)
 
     for i, item in enumerate(pagina_itens, start=inicio + 1):
@@ -1064,6 +1218,13 @@ async def _buscar(texto_livre: str | None, numero_acordao: str | None, numero_pr
             linhas.extend(_detalhe_item(s))
         else:
             linhas.extend(_resumo_item(s, i))
+        grupos_so_ia = avisos_ia_por_id.get(s.get("idDecisao"))
+        if grupos_so_ia:
+            rotulo = ", ".join(f"grupo {n + 1}" for n in grupos_so_ia)
+            linhas.append(
+                f"  ⚠️ {rotulo} só encontrado em informações adicionais (texto de apoio gerado "
+                "com IA pelo DEJUR) — não está na ementa nem no dispositivo desta decisão."
+            )
     if not detalhar:
         linhas.append(
             "\nEmentas truncadas. Para o texto integral, dispositivo, informações adicionais e "
@@ -1192,6 +1353,7 @@ try:
     @mcp.tool()
     async def buscar_jurisprudencia_tcero(
         texto_livre: str = "",
+        grupos: list[list[str]] | None = None,
         numero_acordao: str | None = None,
         numero_processo: str | None = None,
         relator: str | None = None,
@@ -1205,8 +1367,9 @@ try:
 
         É a fonte dos precedentes de controle externo em Rondônia — licitação, prestação de
         contas, responsabilização de gestor, imputação de multa/débito, atos de pessoal sujeitos
-        a registro. Informe pelo menos um critério (texto_livre, numero_acordao, numero_processo,
-        relator ou orgao_julgador); uma chamada sem nenhum devolveria o acervo inteiro.
+        a registro. Informe pelo menos um critério (texto_livre, grupos, numero_acordao,
+        numero_processo, relator ou orgao_julgador); uma chamada sem nenhum devolveria o acervo
+        inteiro.
 
         A API do portal NÃO pagina no servidor — devolve todos os resultados da consulta de uma
         vez (já visto: dezenas de milhares de caracteres em consultas amplas). Esta ferramenta
@@ -1214,6 +1377,16 @@ try:
         minutos, para trocar de página sem rebaixar tudo de novo. Por padrão devolve um resumo
         compacto (ementa truncada); use detalhar=true (só para os primeiros
         5 itens da página) ou obter_acordao_tcero para o texto integral.
+
+        ⚠️ USE `grupos` sempre que a busca envolver 2+ CONCEITOS (não apenas sinônimos do mesmo
+        conceito). Achado offline, 13/09/2026, sobre uma resposta real de 1.141 decisões
+        (`fixtures/exp_C2_controle_or.json`): o portal só sabe fazer OU e ordena por
+        `dataSessao` decrescente (mais recente primeiro) — das 61 decisões que continham
+        "reincidência" E "multa" ao mesmo tempo, só 1 aparecia entre as 10 primeiras da resposta
+        e só 4 entre as 50 primeiras. Sem `grupos`, um agente que lê só a 1ª página de uma busca
+        de dois conceitos está lendo praticamente ruído — o que interessa está espalhado no meio
+        de centenas de decisões que só têm UM dos dois. `grupos` filtra isso no CLIENTE (a API
+        já devolve o array inteiro — não custa requisição extra) ANTES de paginar.
 
         Args:
             texto_livre: Busca por texto no corpo/ementa/informações adicionais. Semântica
@@ -1255,6 +1428,26 @@ try:
                 sem uso) nem a sintaxe crua que ela produz (`AND`, `+termo`). A única forma
                 confirmada de restringir por mais de uma palavra continua sendo a frase exata
                 entre aspas.
+            grupos: Grupos de sinônimos/conceitos — DENTRO do grupo é OU (sinônimos do mesmo
+                conceito), ENTRE grupos é E (conceitos diferentes que têm de aparecer todos),
+                mesmo vocabulário de `grupos` em buscar_jurisprudencia_tjro/trf1. Ex.:
+                `[["reincidência"], ["multa", "imputação de multa"]]` — decisões com
+                "reincidência" E ("multa" OU "imputação de multa"). Diferente dos irmãos, aqui o
+                E é feito NO CLIENTE (não existe E nativo no portal — ver acima): a ferramenta
+                manda ao portal um OU de TODAS as palavras de todos os grupos (recall máximo,
+                uma requisição só) e filtra o array já baixado antes de paginar — o cabeçalho da
+                resposta mostra os dois números ("N no portal (OU nativo) → M após exigir todos
+                os grupos"). Casamento: fold de caixa/acento (ç=c, ã=a); termo com espaço casa
+                como FRASE (substring direta, ordem exigida); termo de uma palavra casa por
+                substring com fronteira de palavra à ESQUERDA — "multa" pega "multas"/"multada"
+                mas não "tumulto" nem "multirreincidência" (não é a palavra "multa" começando
+                ali). Procura em ementa + dispositivo (`acordaoDescricao`) + informações
+                adicionais; quando o ÚNICO lugar em que um grupo bateu foi nas informações
+                adicionais (texto gerado com apoio de IA pelo DEJUR, não o acórdão em si), a
+                ferramenta avisa isso por decisão — não está na ementa nem no dispositivo. Até
+                6 grupos × 12 termos. Se vier junto com texto_livre, os dois se somam na
+                requisição ao portal (mais recall), mas só `grupos` entra no filtro — texto_livre
+                sozinho não restringe nada (ele já é OU por padrão, ver acima).
             numero_acordao: Número do acórdão (ex.: "00055/26" ou "55/26" — esta ferramenta
                 zero-preenche para 8 caracteres sozinha quando o formato é N/AA, espelhando o
                 que o próprio frontend do portal faz antes de mandar; confirmado ao vivo em
@@ -1281,14 +1474,15 @@ try:
                 página para não estourar o contexto.
 
         Returns:
-            Cabeçalho com o total real e os filtros usados; por decisão: sigla+número, id
-            (chave para obter_acordao_tcero/verificar_citacao_tcero), processo, relator, órgão,
-            data da sessão, resultado, citação pronta no padrão "(TCE-RO - SIGLA nº, Rel. ...,
-            ÓRGÃO, j. DD/MM/AAAA, DOe DD/MM/AAAA)", ementa (trecho ou integral conforme
-            detalhar), e aviso quando o próprio portal marca a decisão como cancelada ou
-            vinculada a outra.
+            Cabeçalho com o total real e os filtros usados (com `grupos`, os dois números — antes
+            e depois do filtro no cliente); por decisão: sigla+número, id (chave para
+            obter_acordao_tcero/verificar_citacao_tcero), processo, relator, órgão, data da
+            sessão, resultado, citação pronta no padrão "(TCE-RO - SIGLA nº, Rel. ..., ÓRGÃO,
+            j. DD/MM/AAAA, DOe DD/MM/AAAA)", ementa (trecho ou integral conforme detalhar), aviso
+            quando o próprio portal marca a decisão como cancelada ou vinculada a outra, e (com
+            `grupos`) aviso quando um grupo só casou nas informações adicionais.
         """
-        return await _buscar(texto_livre, numero_acordao, numero_processo, relator, orgao_julgador, pagina, por_pagina, detalhar)
+        return await _buscar(texto_livre, numero_acordao, numero_processo, relator, orgao_julgador, pagina, por_pagina, detalhar, grupos)
 
     @mcp.tool()
     async def obter_acordao_tcero(
@@ -1774,6 +1968,101 @@ if __name__ == "__main__":
             assert "FILTRO INVÁLIDO" in saida_zero, saida_zero
             saida_zero_ok = asyncio.run(_buscar("x", None, None, None, "Pleno", 1, 10, False))
             assert "FILTRO INVÁLIDO" not in saida_zero_ok, saida_zero_ok
+        finally:
+            globals()["_consultar_api"] = _orig_consultar
+
+        # --- 5. `grupos` (E entre grupos, OU dentro do grupo, filtrado NO CLIENTE) ---
+        # Achado 13/09/2026, offline, sobre fixtures/exp_C2_controle_or.json (1.141 decisões
+        # reais, resposta nativa de "reincidência multa"): o portal ordena por dataSessao
+        # decrescente, não por relevância — das 61 decisões que continham as duas palavras ao
+        # mesmo tempo (checagem simples, substring cru, sem fronteira de palavra), só 1 estava
+        # entre as 10 primeiras da resposta e só 4 entre as 50 primeiras.
+        d_c2 = _ler("exp_C2_controle_or.json")
+        assert len(d_c2["result"]) == 1141, len(d_c2["result"])
+
+        # _termo_casa: fronteira de palavra só à ESQUERDA — pega sufixo/flexão, não pega
+        # substring no meio de outra palavra nem prefixo diferente colado.
+        n_multi, _ = _campos_casamento({"ementa": "trata de multirreincidência do gestor, que já é reincidente contumaz"})
+        assert not _termo_casa(n_multi, "reincidência"), n_multi  # "multirreincidência"/"reincidente" != "reincidência"
+        n_multa, _ = _campos_casamento({"ementa": "aplicação de multas, réu foi multado; não houve tumulto na sessão"})
+        assert _termo_casa(n_multa, "multa"), n_multa       # pega "multas" (sufixo livre)
+        assert "tumulto" in n_multa and not re.search(r"\btumulto", n_multa) is False  # sanity: tumulto está no texto
+        n_frase, _ = _campos_casamento({"ementa": "fixada a tese: dano moral presumido no caso concreto"})
+        assert _termo_casa(n_frase, "dano moral")           # termo com espaço = frase, substring direto
+        assert not _termo_casa(n_frase, "moral dano")        # ordem importa (é frase, não bolsa de palavras)
+
+        # _grupos_validos: tetos e descarte de grupo vazio
+        assert _grupos_validos(None) == [] and _grupos_validos("nao e lista") == []  # type: ignore[arg-type]
+        assert _grupos_validos([[], ["  ", ""]]) == []  # grupos sem nenhum termo útil somem
+        assert _grupos_validos([["a", "", "b"]]) == [["a", "b"]]
+        assert len(_grupos_validos([["x"]] * 10)) == GRUPOS_MAX
+        assert len(_grupos_validos([["t"] * 20])[0]) == TERMOS_POR_GRUPO_MAX
+
+        # _montar_texto_livre_com_grupos: texto_livre cru preservado + palavras dos grupos
+        # soltas (sem aspas) e deduplicadas por fold — maximiza recall nativo (OU).
+        tl = _montar_texto_livre_com_grupos("licitação", [["reincidência", "reincidência"], ["dano moral"]])
+        assert tl == "licitação reincidência dano moral", tl  # duplicata (fold igual) cai fora
+        assert _montar_texto_livre_com_grupos("", []) == ""
+        assert _montar_texto_livre_com_grupos("só texto_livre", []) == "só texto_livre"
+
+        # _filtrar_por_grupos sobre os 1.141 resultados reais: E entre os dois grupos.
+        # RESULTADO REAL: 59, não 61 — divergência EXPLICADA, não ajustada para bater: a checagem
+        # informal anterior usava substring cru (sem fronteira de palavra) num radical truncado
+        # "reincidenc", que casava também com "reincidente" (palavra diferente, nunca contém o
+        # termo "reincidência" como substring) e com "multirreincidência" (contém "reincidência"
+        # como substring, mas SEM fronteira de palavra à esquerda — é outra palavra). Os 4 ids
+        # que saem do conjunto (81969, 84690, 84681, 95941) foram inspecionados manualmente e
+        # todos caem exatamente nesses dois casos — nenhum é um "reincidência" de verdade perdido.
+        grupos_and = [["reincidência"], ["multa"]]
+        filtrados, avisos_ia = _filtrar_por_grupos(d_c2["result"], grupos_and)
+        assert len(filtrados) == 59, len(filtrados)
+        ids_fora = {81969, 84690, 84681, 95941}
+        ids_dentro = {item["source"]["idDecisao"] for item in filtrados}
+        assert not (ids_fora & ids_dentro), ids_fora & ids_dentro
+        # ordem cronológica preservada (não reordena) — o ponto inteiro do achado é que a ordem
+        # nativa esconde os resultados relevantes; confirma que o filtro não "conserta" isso
+        # sozinho (é para isso que pagina/por_pagina do lado de cá continuam precisando existir).
+        ids_ordem = [item["source"]["idDecisao"] for item in filtrados]
+        assert ids_ordem[:3] == [
+            item["source"]["idDecisao"] for item in d_c2["result"]
+            if item["source"]["idDecisao"] in ids_dentro
+        ][:3]
+        # 14 decisões só bateram um dos dois grupos via informações adicionais (não na ementa/
+        # dispositivo) — inclui o real idDecisao=96429 (grupo 2/"multa" só em IA) e
+        # idDecisao=94915 (grupo 1/"reincidência" só em IA), ambos conferidos manualmente.
+        assert len(avisos_ia) == 14, len(avisos_ia)
+        assert avisos_ia.get(96429) == [1], avisos_ia.get(96429)
+        assert avisos_ia.get(94915) == [0], avisos_ia.get(94915)
+
+        # união (1 grupo, 2 sinônimos) sobre fixtures/exp_A1_espaco_pct20.json: deve bater com o
+        # total NATIVO da busca "reincidência direcionamento" (156) — todo resultado do OU
+        # nativo tem de casar o único grupo (OU dos dois sinônimos), sem exceção.
+        d_a1 = _ler("exp_A1_espaco_pct20.json")
+        filtrados_uniao, avisos_uniao = _filtrar_por_grupos(d_a1["result"], [["reincidência", "direcionamento"]])
+        assert len(filtrados_uniao) == 156, len(filtrados_uniao)
+        assert len(avisos_uniao) == 27, len(avisos_uniao)  # mesmos 27 já contados no Experimento A
+
+        # ponta a ponta, com rede mockada devolvendo o fixture real de 1.141 decisões
+        _params_vistos_grupos: list[dict] = []
+
+        async def _consultar_c2(params, operacao):
+            _params_vistos_grupos.append(dict(params))
+            return d_c2
+
+        globals()["_consultar_api"] = _consultar_c2
+        try:
+            saida_grupos = asyncio.run(_buscar(None, None, None, None, None, 1, 5, False, [["reincidência"], ["multa"]]))
+            assert "reincidência" in _params_vistos_grupos[-1]["textoLivre"] and "multa" in _params_vistos_grupos[-1]["textoLivre"], _params_vistos_grupos[-1]
+            assert "**1141 decisão(ões)**" in saida_grupos and "(OU nativo)" in saida_grupos, saida_grupos[:300]
+            assert "**59** após exigir todos os 2 grupo(s)" in saida_grupos, saida_grupos[:300]
+            # idDecisao 96429 está na posição 2 (0-index) do filtrado -> 3º item da página 1
+            assert "id 96429" in saida_grupos and "grupo 2 só encontrado em informações adicionais" in saida_grupos, saida_grupos
+            # sem grupos, o mesmo fixture não filtra nada (comportamento antigo preservado)
+            saida_sem_grupos = asyncio.run(_buscar("reincidência multa", None, None, None, None, 1, 5, False, None))
+            assert "**1141 decisão(ões)**" in saida_sem_grupos and "OU nativo" not in saida_sem_grupos, saida_sem_grupos[:200]
+            # grupo que não casa NADA: zero com aviso explicando que havia 1.141 via OU nativo
+            saida_grupo_zero = asyncio.run(_buscar(None, None, None, None, None, 1, 5, False, [["palavraQueNaoExisteEmNenhumaEmentaXYZ123"]]))
+            assert "0** após exigir todos os 1 grupo(s)" in saida_grupo_zero and "1141 decisão(ões) no portal via OU nativo" in saida_grupo_zero, saida_grupo_zero
         finally:
             globals()["_consultar_api"] = _orig_consultar
 
