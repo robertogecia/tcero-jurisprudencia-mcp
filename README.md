@@ -130,23 +130,38 @@ já devolve baixa **sem login, sem cookie, sem JavaScript** (é só um GET).
 
 1. Pega o `linkArquivo` da primeira decisão encontrada (mesma que o detalhe normal já mostra),
    já corrigido para `tcero.tc.br`.
-2. Baixa o PDF com o mesmo `User-Agent` identificável do resto deste servidor, mas **sem usar o
+2. Confere o host contra uma lista fechada (`_HOSTS_PDF_PERMITIDOS`: `tcero.tc.br`,
+   `tce.ro.gov.br` e subdomínios, só http/https) **antes de pedir e de novo depois de seguir os
+   redirects**. A URL não é escrita pelo servidor: vem do campo `linkArquivo` do JSON do portal,
+   e o cliente segue redirects — sem a lista, um campo alterado mandaria o downloader a qualquer
+   host, inclusive a rede local da máquina do usuário.
+3. Baixa o PDF com o mesmo `User-Agent` identificável do resto deste servidor, mas **sem usar o
    disjuntor compartilhado da API de busca** — é outro host, e misturar os dois orçamentos
    bloquearia a busca de jurisprudência por causa de downloads de PDF, sem motivo real. Em vez
    disso, um espaçamento mínimo próprio de 3s e um lock em memória (moderação básica, suficiente
    porque cada chamada é uma decisão específica do agente, nunca um laço sobre uma página
    inteira de resultados).
-3. Extrai o texto com PyMuPDF. Corte sempre dito explicitamente, num teto de ~45 mil caracteres
-   (`ORCAMENTO_PDF`) — maior que qualquer outro campo deste servidor porque é o documento
-   inteiro, mas ainda finito; o teto de ~60 mil da resposta INTEIRA (`ORCAMENTO_SAIDA`) continua
-   valendo por cima e pode cortar dentro do PDF se o resto do detalhe já estiver grande.
-4. Cacheia o texto extraído por 1h, por `id_decisao` (ou hash do link, se faltar id) — pedir de
-   novo o mesmo acórdão na mesma sessão não baixa o PDF outra vez.
+4. Extrai o texto com PyMuPDF, com **teto de 400 páginas e de 20s de wall-clock**
+   (`TETO_PAGINAS_PDF`/`TETO_SEGUNDOS_PDF`, conferidos a cada página, mais um timeout de thread
+   como rede de segurança). Os 20 MB de `TETO_BYTES_PDF` limitam só o arquivo *comprimido*:
+   3.000 páginas cheias cabem em 1,4 MB e, sem esses tetos, levavam 9s e 112 MB de memória —
+   dentro do processo do Claude do usuário, ou seja, travando a sessão dele. Parada por teto sai
+   marcada como `EXTRAÇÃO PARCIAL`.
+5. Corte sempre dito explicitamente, num teto de ~45 mil caracteres (`ORCAMENTO_PDF`) — ou no
+   que sobrar dos ~60 mil da resposta inteira (`ORCAMENTO_SAIDA`), o que for menor: o bloco é
+   montado já com o espaço que resta, para não montar uma seção que o corte final descartaria
+   inteira. **O corte guarda começo E fim do documento**, com o miolo marcado no meio, porque o
+   voto e o dispositivo — a parte citável — ficam no FIM (no id 77649 o "VOTO" começa no
+   caractere 115.259 de 127.460; cortar só pela cabeça entregava o relatório e jogava fora
+   exatamente o que se queria citar).
+6. Cacheia o texto extraído por 1h, por `id_decisao` (ou hash do link, se faltar id) — pedir de
+   novo o mesmo acórdão na mesma sessão não baixa o PDF outra vez. O cache guarda só o TEXTO
+   (nunca os bytes do PDF), no máximo 24 entradas.
 
 ### PDF sem camada de texto (digitalização/imagem)
 
-Se a extração devolver texto vazio ou quase vazio (menos de ~30 caracteres não-espaço por
-página, em média), a ferramenta **não finge que leu**: diz explicitamente "PDF sem texto
+Se a extração devolver texto vazio ou quase vazio (menos de **250** caracteres não-espaço por
+página, em média — `LIMIAR_CHARS_POR_PAGINA`), a ferramenta **não finge que leu**: diz explicitamente "PDF sem texto
 extraível (provável digitalização) — inteiro teor não pôde ser lido automaticamente; abra o
 link no navegador" e a saída NÃO ganha a linha `Verificação: "inteiro teor lido (PDF)"`. Não
 faz OCR de propósito — já testado antes em processo grande (382 páginas) e não valeu a pena
@@ -154,14 +169,31 @@ faz OCR de propósito — já testado antes em processo grande (382 páginas) e 
 também não vira "não encontrado": vira `[LEITURA DE PDF NÃO REALIZADA — motivo]`, porque a
 decisão existe — só a leitura automática do PDF falhou.
 
-### Semântica de `verificacao` — categoria nova
+O limiar era 30 chars/página até o red team de 14/09/2026: um PDF **digitalizado** com o carimbo
+de assinatura digital em texto no rodapé rende ~83 caracteres por página e passava por 30,
+ganhando indevidamente a linha "inteiro teor lido (PDF)". Os 4 PDFs reais em `fixtures/pdf/` têm
+de 1.950 a 2.844 chars/página, então 250 fica ~8× abaixo do menor caso real e ~3× acima do
+rodapé-carimbo. Recusar é sempre seguro (manda abrir no navegador); reivindicar leitura de um
+scan, não. **PDF misto** (acórdão nativo + anexos digitalizados): acima de 30% das páginas
+praticamente sem texto, a saída avisa quantas e rebaixa a verificação para parcial.
 
-Quando a extração tem sucesso e traz texto substancial, a saída inclui explicitamente a linha
-`Verificação: "inteiro teor lido (PDF)"` — categoria **mais forte** que "só ementa/dispositivo"
-(o que este servidor sempre devolveu até agora) porque é a primeira vez que ele consegue ler o
-julgado inteiro sem intervenção humana no navegador. Isto é o campo `verificacao` que a ficha de
-precedente usa (`pesquisador-juridico`/`segundo-cerebro`) — só escrever essa frase depois desta
-ferramenta ter de fato devolvido essa linha, nunca por conta própria.
+### Semântica de `verificacao` — categoria nova, e a variante "em parte"
+
+Quando a extração tem sucesso, traz texto substancial **e o documento coube inteiro**, a saída
+inclui explicitamente a linha `Verificação: "inteiro teor lido (PDF)"` (nomeando a decisão) —
+categoria **mais forte** que "só ementa/dispositivo" (o que este servidor sempre devolveu até
+agora) porque é a primeira vez que ele consegue ler o julgado inteiro sem intervenção humana no
+navegador. Isto é o campo `verificacao` que a ficha de precedente usa
+(`pesquisador-juridico`/`segundo-cerebro`) — só escrever essa frase depois desta ferramenta ter
+de fato devolvido essa linha, nunca por conta própria.
+
+Quando o texto foi cortado pelo orçamento, a extração parou num teto de páginas/tempo, ou o PDF
+é misto, a linha sai **rebaixada**: `Verificação: "inteiro teor lido em parte (PDF)"`. A
+diferença não é cosmética — serve para citar o que está literalmente ali, **não** serve para
+afirmar que algo *não* consta do acórdão, e essa decisão não pode entrar na ficha como "inteiro
+teor lido". Dos 4 PDFs reais, só o menor (96141, 6 páginas) cabe inteiro nos 45 mil caracteres;
+os outros três saem como "em parte". A linha também nomeia de qual decisão é o PDF, porque com
+`numero_acordao`/`numero_processo` o portal pode devolver várias decisões e só a primeira é lida.
 
 ### Exemplo real (id 98114, APL-TC 00055/26, 14/09/2026)
 

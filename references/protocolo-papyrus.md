@@ -418,30 +418,76 @@ objeto da presente deliberação à análise do cumprimento do item II do Acórd
 
 Nenhum dos 4 PDFs reais baixados veio sem camada de texto (todos são nativos, gerados
 digitalmente pelo sistema do TCE-RO — "DP-SPJ" no rodapé de cada página). A detecção de
-"PDF sem texto extraível" (limiar: `LIMIAR_CHARS_POR_PAGINA` = 30 caracteres não-espaço por
-página, em média) foi testada com um PDF sintético gerado em memória com o próprio `fitz`
+"PDF sem texto extraível" (limiar: `LIMIAR_CHARS_POR_PAGINA` = **250** caracteres não-espaço por
+página, em média — era 30 até o red team de 14/09/2026, ver adiante) foi testada com um PDF
+sintético gerado em memória com o próprio `fitz`
 (página em branco, sem `insert_text`) — sem gastar nenhum download do orçamento de rede. Não
 faz OCR: já testado antes em processo grande (382 páginas, ver
 `docling-nao-vale-pena-processo-grande` na memória do usuário) e não valeu a pena — lento e
 ainda falhava em PDF com texto digital.
 
-### Orçamento de caracteres (`ORCAMENTO_PDF` = 45.000)
+### Orçamento de caracteres (`ORCAMENTO_PDF` = 45.000), corte com começo E fim
 
 Maior que `ORCAMENTO_DETALHE` (40.000) porque o PDF é o documento inteiro (relatório+voto+
 ementa+dispositivo), não um campo isolado — mas ainda finito: o maior PDF real testado (id
 77649, 36 páginas) já extraiu 127.460 caracteres, quase 3× o teto. `ORCAMENTO_SAIDA` (60.000)
-continua valendo por cima — se o detalhe da decisão já estiver grande, o corte final ainda pode
-cortar dentro do PDF, e isso é dito explicitamente (mesmo padrão de `_cortar_bloco` para o resto
-do arquivo).
+continua valendo por cima; desde 14/09/2026 o bloco do PDF é montado **já com o que sobra** da
+resposta (`min(ORCAMENTO_PDF, ORCAMENTO_SAIDA − já usado − reserva)`), em vez de ser montado com
+45.000 fixos e depois descartado inteiro pelo `_cortar_bloco` — que corta em fronteira de LINHA,
+e o texto do PDF é uma linha só.
+
+O corte guarda **começo e fim** (55%/45%), com o miolo marcado: o voto e o dispositivo ficam no
+FIM do documento (id 77649: "VOTO" no caractere 115.259 e "É como voto" no 122.759, de 127.460),
+então cortar só pela cabeça entregava o relatório e descartava exatamente a parte citável.
 
 ### Cache e rede
 
 Texto extraído cacheado por 1h por `id_decisao` (TTL bem maior que o da busca, 5min — o inteiro
-teor de um acórdão não muda). Download do PDF usa `tcero.tc.br`, um host DIFERENTE de
+teor de um acórdão não muda). Guarda só o TEXTO, nunca os bytes do PDF, no máximo 24 entradas.
+Download do PDF usa `tcero.tc.br`, um host DIFERENTE de
 `papyrus.tcero.tc.br` (API de busca) — não compartilha o disjuntor da API, só um espaçamento
 mínimo próprio de 3s e um lock em memória, para não bloquear a busca de jurisprudência por
 causa de um PDF. Teto de 20 MB por PDF (checado por `Content-Length` e também durante o
 streaming, caso o header falte ou minta) — nenhum dos 4 PDFs reais chegou perto (todos < 800 KB).
+
+Host em lista fechada (`_HOSTS_PDF_PERMITIDOS` = `tcero.tc.br`, `tce.ro.gov.br` e subdomínios,
+só http/https), conferido antes de pedir e de novo no destino final do redirect. **Se o TCE-RO
+passar a servir os PDFs de um terceiro host** (CDN, por exemplo), o download passa a falhar com
+`[LEITURA DE PDF NÃO REALIZADA — ... aponta para fora do TCE-RO]` e a correção é acrescentar o
+host à lista no servidor — não contornar.
+
+### Tetos da EXTRAÇÃO (`TETO_PAGINAS_PDF` = 400, `TETO_SEGUNDOS_PDF` = 20s) — red team 14/09/2026
+
+`TETO_BYTES_PDF` limita só o arquivo **comprimido**; o que o PyMuPDF processa depois de abrir
+não tem relação com isso. Medido: 3.000 páginas cheias de texto cabem em **1,43 MB** e levavam
+**9,0s / 9,4 milhões de caracteres / 112 MB de pico de memória**; 10.000 páginas em branco,
+1,7 MB e 1,1s. Como o servidor roda dentro do processo do Claude do usuário, travar ali trava a
+sessão. Com os tetos: as mesmas 3.000 páginas levam **0,95s / 15 MB**. A parada é conferida a
+cada página (cooperativa, interrompe de verdade) e há um `asyncio.wait_for` sobre
+`asyncio.to_thread` como rede de segurança para uma única página patológica — a thread órfã
+segue até terminar (Python não interrompe CPU-bound síncrono de dentro do processo), mas a
+sessão do usuário é devolvida. Acórdãos reais têm 6 a 36 páginas, então 400 é ~11× o maior caso
+conhecido.
+
+### Limiar de "sem texto": por que 30 não servia
+
+Um PDF **digitalizado** com o carimbo de assinatura digital em texto no rodapé de cada página
+rende ~83 caracteres não-espaço por página — passava pelo limiar de 30 e ganhava a linha
+"inteiro teor lido (PDF)" sobre um documento de que não se leu uma palavra do conteúdo. Os 4
+PDFs reais: 2.844 (77649), 2.395 (98114), 2.356 (85572) e 1.950 (96141) chars/página. 250 fica
+~8× abaixo do menor caso real e ~3× acima do rodapé-carimbo. Além disso, acima de 30% de páginas
+quase sem texto (`_FRACAO_PAGINAS_VAZIAS_AVISO`, caso do PDF misto: acórdão nativo + anexos
+digitalizados) a saída avisa quantas páginas são e rebaixa a verificação.
+
+### `"inteiro teor lido"` × `"inteiro teor lido em parte"`
+
+A frase forte só sai quando o documento coube inteiro, sem corte, sem parada por teto e sem
+suspeita de PDF misto — e nomeia a decisão (`sigla numero, id N`), porque com
+`numero_acordao`/`numero_processo` o portal pode devolver várias decisões e só a PRIMEIRA é
+lida. Nos demais casos sai `Verificação: "inteiro teor lido em parte (PDF)"`, com o aviso de que
+serve para citar o que está literalmente ali, não para afirmar que algo não consta do acórdão, e
+que não pode entrar na ficha de precedente como "inteiro teor lido". Dos 4 PDFs reais, só o
+96141 (6 páginas, 14.409 chars) cabe inteiro.
 
 ### Por que NÃO estender a mesma capacidade a `buscar_jurisprudencia_tcero`
 
