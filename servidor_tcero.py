@@ -426,6 +426,9 @@ def _resumo_item(s: dict, indice: int) -> list[str]:
         meta.append("transitado em julgado" + (f" em {_data_br(s.get('dataTransitadoJulgado') or '')}" if s.get("dataTransitadoJulgado") else " (data não informada)"))
     linhas.append("  " + " · ".join(meta))
     linhas.append(f"  Citação: {_citacao(s)}")
+    link = _corrigir_link_pdf(s.get("linkArquivo") or "")
+    if link:
+        linhas.append(f"  Inteiro teor (PDF): {link}")
     linhas.append(f"  Ementa (trecho): {_truncar(_uma_linha(s.get('ementa') or ''), EMENTA_TRECHO) or '—'}")
     for a in _avisos_cancelamento_vinculo(s):
         linhas.append(f"  {a}")
@@ -1230,8 +1233,9 @@ async def _buscar(texto_livre: str | None, numero_acordao: str | None, numero_pr
             )
     if not detalhar:
         linhas.append(
-            "\nEmentas truncadas. Para o texto integral, dispositivo, informações adicionais e "
-            "link do PDF de um item específico: obter_acordao_tcero(id_decisao=<id acima>)."
+            "\nEmentas truncadas (o link do PDF acima de cada item já é o inteiro teor completo). "
+            "Para o texto integral da ementa, dispositivo e informações adicionais de um item "
+            "específico: obter_acordao_tcero(id_decisao=<id acima>)."
         )
     if total > pagina * por_pagina:
         linhas.append(f"\nPróxima página: pagina={pagina + 1} (mesmos parâmetros).")
@@ -1481,7 +1485,8 @@ try:
             e depois do filtro no cliente); por decisão: sigla+número, id (chave para
             obter_acordao_tcero/verificar_citacao_tcero), processo, relator, órgão, data da
             sessão, resultado, citação pronta no padrão "(TCE-RO - SIGLA nº, Rel. ..., ÓRGÃO,
-            j. DD/MM/AAAA, DOe DD/MM/AAAA)", ementa (trecho ou integral conforme detalhar), aviso
+            j. DD/MM/AAAA, DOe DD/MM/AAAA)", link do PDF do inteiro teor (quando o portal o
+            informa), ementa (trecho ou integral conforme detalhar), aviso
             quando o próprio portal marca a decisão como cancelada ou vinculada a outra, e (com
             `grupos`) aviso quando um grupo só casou nas informações adicionais.
         """
@@ -1716,6 +1721,13 @@ if __name__ == "__main__":
         texto_resumo = "\n".join(resumo)
         assert "APL-TC 00055/26" in texto_resumo and "id 98114" in texto_resumo, texto_resumo
         assert "Citação: (TCE-RO -" in texto_resumo
+        # achado 14/09/2026 (pedido do usuário: resultado de busca sem link força uma segunda
+        # chamada a obter_acordao_tcero só para conseguir o PDF) — o resumo compacto agora leva
+        # o link já corrigido (tce.ro.gov.br -> tcero.tc.br), não só o obter_acordao_tcero.
+        assert s0.get("linkArquivo"), "fixture sem linkArquivo — ajuste o teste, não remova"
+        assert "Inteiro teor (PDF): https://tcero.tc.br/AbrirPdfConvidado/" in texto_resumo, texto_resumo
+        resumo_sem_link = _resumo_item({"idDecisao": 1, "ementa": "x"}, 1)
+        assert not any("Inteiro teor (PDF)" in l for l in resumo_sem_link), resumo_sem_link
         detalhe = "\n".join(_detalhe_item(s0))
         assert "Ementa (integral" in detalhe and "Inteiro teor (PDF): https://tcero.tc.br/" in detalhe, detalhe
         assert "GERADO COM APOIO DE IA" in detalhe or "não informado pelo portal" in detalhe

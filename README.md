@@ -14,7 +14,7 @@ que se supunha antes de testar) em `references/protocolo-papyrus.md`; respostas 
 
 | Tool | O que faz |
 |---|---|
-| `buscar_jurisprudencia_tcero` | busca por texto livre e/ou por número de acórdão, número de processo, relator ou órgão julgador; `grupos` (E entre grupos, OU dentro do grupo) filtra por 2+ conceitos — o E é feito **no cliente**, porque o portal só sabe fazer OU e ordena por data, não por relevância; paginação **no cliente** (a API do portal não pagina no servidor); resumo compacto por padrão, `detalhar=true` para os primeiros itens da página |
+| `buscar_jurisprudencia_tcero` | busca por texto livre e/ou por número de acórdão, número de processo, relator ou órgão julgador; `grupos` (E entre grupos, OU dentro do grupo) filtra por 2+ conceitos — o E é feito **no cliente**, porque o portal só sabe fazer OU e ordena por data, não por relevância; paginação **no cliente** (a API do portal não pagina no servidor); resumo compacto por padrão (já com o link do PDF de cada item, corrigido para o host atual), `detalhar=true` para os primeiros itens da página |
 | `obter_acordao_tcero` | detalhe completo de uma decisão — ementa integral, dispositivo (`acordaoDescricao`), informações adicionais (⚠️ geradas por IA pelo DEJUR do próprio tribunal), legislação aplicada, link do PDF do inteiro teor; prefira `id_decisao` (busca direta, resposta pequena) |
 | `verificar_citacao_tcero` | confere se um trecho aparece literalmente na ementa ou no dispositivo antes de ir entre aspas — `[...]` separa fragmentos, ❌ vem com o que não bateu |
 | `diagnostico_ritmo_tcero` | estado do disjuntor/limitador, sem rede |
