@@ -1,8 +1,9 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["mcp[cli]>=1.4.0,<2", "httpx>=0.27", "truststore>=0.9"]
+# dependencies = ["mcp[cli]>=1.4.0,<2", "httpx>=0.27", "truststore>=0.9", "pymupdf>=1.24"]
 # (mcp 2.x renomeou FastMCP para MCPServer e mudou APIs — mesma trava dos irmãos TJRO/TRF1;
-#  manter <2 até migrar os três juntos)
+#  manter <2 até migrar os três juntos. pymupdf sem teto de versão — nenhuma quebra conhecida;
+#  adicionado 14/09/2026 para leitura do inteiro teor em PDF, ver obter_acordao_tcero)
 # ///
 """
 Servidor MCP — Jurisprudência do TCE-RO (Tribunal de Contas do Estado de Rondônia)
@@ -22,7 +23,10 @@ Expõe quatro ferramentas ao Claude:
                                   no servidor), resumo compacto por padrão
   • obter_acordao_tcero         — detalhe completo de uma decisão (ementa integral, dispositivo,
                                   informações adicionais geradas por IA pelo DEJUR, legislação,
-                                  link do inteiro teor em PDF)
+                                  link do inteiro teor em PDF); `ler_inteiro_teor=true` baixa esse
+                                  PDF e extrai relatório + voto de verdade (14/09/2026) — categoria
+                                  de verificação mais forte que ementa/índice, sem intervenção
+                                  humana no navegador (ver seção dedicada no README)
   • verificar_citacao_tcero     — confere se um trecho aparece literalmente na ementa/dispositivo
   • diagnostico_ritmo_tcero     — estado do disjuntor/limitador, sem rede
 
@@ -66,6 +70,16 @@ try:
 except Exception:  # permite importar o módulo para testes sem httpx instalado
     httpx = None  # type: ignore
 
+try:
+    import pymupdf as fitz  # PyMuPDF — extração de texto do inteiro teor em PDF (achado
+    # 14/09/2026: linkArquivo baixa sem login, diferente do TRF1 (Cloudflare) — ver
+    # README/protocolo-papyrus). `import pymupdf as fitz` (não `import fitz`) evita o aviso de
+    # depreciação que o pacote imprime no shim de compatibilidade antigo — mesmo módulo.
+except Exception:  # permite importar o módulo para testes sem pymupdf instalado
+    fitz = None  # type: ignore
+
+import hashlib
+
 # --------------------------------------------------------------------------- #
 # Constantes do portal                                                         #
 # --------------------------------------------------------------------------- #
@@ -106,6 +120,58 @@ ORCAMENTO_SAIDA = 60_000  # teto da resposta inteira de QUALQUER ferramenta
 TETO_DETALHAR_NA_BUSCA = 5  # quantos itens da página aceitam detalhar=true de uma vez
 TETO_ITENS_LISTADOS = 25  # quantas decisões homônimas listar antes de cortar (achado 3)
 TETO_DECISOES_VERIFICADAS = 20  # quantas decisões verificar_citacao confere de uma vez
+
+# --------------------------------------------------------------------------- #
+# Inteiro teor em PDF (14/09/2026) — relatório + voto, não só ementa/dispositivo #
+# --------------------------------------------------------------------------- #
+# ORCAMENTO_PDF é maior que ORCAMENTO_CAMPO (12k) e um pouco maior que ORCAMENTO_DETALHE
+# (40k) porque o PDF É o documento inteiro (relatório+voto+ementa+dispositivo), não um campo
+# isolado — merece o maior orçamento de texto de qualquer bloco deste servidor. Mas ainda é
+# finito: um acórdão real de 36 páginas (id 77649, 14/09/2026) já extraiu 127.460 caracteres —
+# sem teto, um PDF grande sufocaria quem chama exatamente como o red team de 13/09/2026 já
+# mostrou para busca+detalhar. ORCAMENTO_SAIDA (60k) continua valendo por cima disto: se o
+# detalhe da decisão já estiver perto do teto, o corte final ainda pode cortar dentro do PDF —
+# e isso é dito explicitamente, como todo corte deste arquivo.
+ORCAMENTO_PDF = 45_000
+TETO_BYTES_PDF = 20 * 1024 * 1024  # 20 MB — acima disso (por Content-Length ou durante o
+                                    # download em streaming), não baixa: registra o limite e
+                                    # avisa, em vez de carregar um arquivo grande demais na memória.
+LIMIAR_CHARS_POR_PAGINA = 30  # abaixo de ~30 caracteres não-espaço por página em MÉDIA, trata
+                              # como digitalização sem camada de texto (não faz OCR — já testado
+                              # em processo grande antes, lento e ainda falhava: fora de escopo).
+_ESPACAMENTO_MIN_PDF_S = 3.0  # mesma moderação de rede do portal, aplicada ao host de arquivo
+                              # (tcero.tc.br é outro host — não usa o disjuntor da API de busca,
+                              # que bloquearia a jurisprudência sem motivo por causa de um PDF).
+# Cache do TEXTO já extraído de um PDF (por id_decisao, ou hash do link quando falta id): TTL
+# de 1h, bem mais longo que o da busca (5min) — o inteiro teor de um acórdão não muda, e o pior
+# caso a evitar é rebaixar/reprocessar o MESMO PDF várias vezes na mesma sessão (rede de
+# terceiro pensada para servir humano no navegador, não para automação repetida).
+_CACHE_PDF_TTL_S = 60 * 60.0
+_CACHE_PDF_MAX = 24
+_cache_pdf: "dict[str, tuple[float, dict]]" = {}
+_ultimo_download_pdf_em = 0.0
+_lock_download_pdf = asyncio.Lock()
+
+
+def _cache_pdf_ler(chave: str) -> "dict | None":
+    item = _cache_pdf.get(chave)
+    if not item:
+        return None
+    quando, dados = item
+    if time.time() - quando > _CACHE_PDF_TTL_S:
+        _cache_pdf.pop(chave, None)
+        return None
+    return dados
+
+
+def _cache_pdf_gravar(chave: str, dados: dict) -> None:
+    while len(_cache_pdf) >= _CACHE_PDF_MAX:
+        _cache_pdf.pop(next(iter(_cache_pdf)))
+    _cache_pdf[chave] = (time.time(), dados)
+
+
+def _cache_pdf_limpar() -> None:
+    _cache_pdf.clear()
 
 # Cache da resposta crua de uma consulta já feita (por processo, TTL curto): repetir a MESMA
 # busca (ex.: só mudando a página) não deve rebaixar o mesmo payload de novo.
@@ -267,6 +333,84 @@ def _corrigir_link_pdf(link: str) -> str:
         return ""
     l = "https:" + link if link.startswith("//") else link
     return _RE_HOST_ANTIGO_PDF.sub("https://tcero.tc.br", l)
+
+
+def _extrair_texto_pdf(conteudo: bytes) -> dict:
+    """Extrai o texto de um PDF (bytes já em memória) com PyMuPDF (fitz) — sem rede, fácil de
+    testar com um PDF sintético ou um fixture real já baixado. NÃO faz OCR: se a extração
+    devolver texto vazio ou quase vazio (menos de LIMIAR_CHARS_POR_PAGINA caracteres não-espaço
+    por página, em MÉDIA — provável digitalização/imagem), marca `sem_texto=True` em vez de
+    fingir que leu algo. Mesmo princípio de honestidade do resto deste arquivo: 'não localizado'
+    não é 'não pesquisado' — aqui, 'PDF sem texto extraível' não é 'inteiro teor lido'.
+
+    Devolve sempre um dict com as mesmas chaves: `texto` (só quando sem_texto é False),
+    `paginas`, `chars_nao_espaco`, `sem_texto`, `erro` (None em caso de sucesso)."""
+    if fitz is None:
+        return {"texto": "", "paginas": 0, "chars_nao_espaco": 0, "sem_texto": False,
+                "erro": "pacote 'pymupdf' (fitz) não instalado nesta ferramenta"}
+    try:
+        doc = fitz.open(stream=conteudo, filetype="pdf")
+    except Exception as e:
+        return {"texto": "", "paginas": 0, "chars_nao_espaco": 0, "sem_texto": False,
+                "erro": f"{type(e).__name__}: {e}"}
+    try:
+        paginas = doc.page_count
+        partes = [pagina.get_text() for pagina in doc]
+    except Exception as e:
+        return {"texto": "", "paginas": 0, "chars_nao_espaco": 0, "sem_texto": False,
+                "erro": f"{type(e).__name__}: {e}"}
+    finally:
+        doc.close()
+    texto = "\n".join(partes)
+    chars_nao_espaco = len(re.sub(r"\s", "", texto))
+    sem_texto = chars_nao_espaco < LIMIAR_CHARS_POR_PAGINA * max(1, paginas)
+    return {
+        "texto": "" if sem_texto else texto,
+        "paginas": paginas,
+        "chars_nao_espaco": chars_nao_espaco,
+        "sem_texto": sem_texto,
+        "erro": None,
+    }
+
+
+def _bloco_inteiro_teor_pdf(resultado: dict) -> list[str]:
+    """Formata a seção 'Inteiro teor (PDF, extraído)' a partir do dict de `_extrair_texto_pdf`.
+    Corte SEMPRE dito explicitamente (mesmo padrão de `_cortar_bloco`/`_detalhe_item_bruto` para
+    o resto deste arquivo). Nunca reivindica 'inteiro teor lido' quando `sem_texto` é True."""
+    if resultado.get("sem_texto"):
+        return [
+            "\n**Inteiro teor (PDF): sem texto extraível**",
+            "PDF sem texto extraível (provável digitalização) — inteiro teor não pôde ser lido "
+            "automaticamente; abra o link no navegador.",
+            f"({resultado.get('paginas', 0)} página(s), {resultado.get('chars_nao_espaco', 0)} "
+            f"caractere(s) não-espaço no total — abaixo do limiar de {LIMIAR_CHARS_POR_PAGINA} "
+            "por página para considerar texto real; este servidor não faz OCR).",
+        ]
+    texto = resultado.get("texto") or ""
+    cortado = len(texto) > ORCAMENTO_PDF
+    if cortado:
+        texto = texto[:ORCAMENTO_PDF].rsplit(" ", 1)[0] + "… [CORTADO pelo orçamento de caracteres do PDF]"
+    # `.replace(",", ".")` (separador de milhar, mesmo padrão do resto do arquivo) só pode
+    # tocar o NÚMERO formatado — aplicá-lo à frase inteira trocaria as vírgulas literais de
+    # "(PDF, extraído)"/"relatório, voto, ementa" por pontos (achado ao testar, 14/09/2026).
+    n_chars_fmt = f"{resultado.get('chars_nao_espaco', 0):,}".replace(",", ".")
+    linhas = [
+        "\n**Inteiro teor (PDF, extraído) — relatório, voto, ementa e dispositivo, como o "
+        f"documento realmente traz ({resultado.get('paginas', 0)} página(s), "
+        f"{n_chars_fmt} caractere(s) não-espaço extraídos):**",
+        _neutralizar_markdown(texto),
+    ]
+    if cortado:
+        linhas.append(
+            f"\n[SAÍDA CORTADA no teto de {ORCAMENTO_PDF:,} caracteres (inteiro teor do PDF) — "
+            "abra o PDF no navegador para o texto completo.]".replace(",", ".")
+        )
+    linhas.append(
+        "\nVerificação: \"inteiro teor lido (PDF)\" — relatório e voto completos foram extraídos "
+        "automaticamente do PDF do TCE-RO (não só ementa/dispositivo/índice). Esta é a categoria "
+        "de verificação mais forte que este servidor consegue sem intervenção humana no navegador."
+    )
+    return linhas
 
 
 def _situacao_rotulo(situacao) -> str:
@@ -1022,6 +1166,109 @@ async def _consultar_api(params: dict, operacao: str) -> dict:
     return dados
 
 
+class LeituraPdfFalhou(RuntimeError):
+    """Erro de rede (ou de tamanho) ao baixar o PDF do inteiro teor. NUNCA reportar como
+    'decisão não encontrada' — a decisão existe, só a leitura automática do PDF falhou."""
+
+
+async def _baixar_pdf(url: str) -> bytes:
+    """Baixa o PDF do inteiro teor de `url` (já corrigida para tcero.tc.br por
+    `_corrigir_link_pdf`). Mesma moderação de rede do resto deste arquivo — User-Agent
+    identificável (`HEADERS_BASE`), poucas tentativas, nunca em rajada — mas é um HOST
+    DIFERENTE do endpoint de busca (`papyrus.tcero.tc.br`): não usa o disjuntor compartilhado
+    de `/api/espelho/buscar` (aquele orçamento é da API de jurisprudência; misturar os dois
+    faria uma sessão que só lê PDFs bloquear a busca de jurisprudência sem nenhum motivo real).
+    Em vez disso, um espaçamento mínimo próprio (`_ESPACAMENTO_MIN_PDF_S`) e um lock em
+    memória — moderação básica, não um disjuntor completo, porque cada chamada de
+    `obter_acordao_tcero(ler_inteiro_teor=true)` é uma decisão do agente por vez, nunca um laço
+    sobre uma página inteira de resultados (ver decisão de NÃO estender `buscar_jurisprudencia_tcero`
+    da mesma forma, no README/protocolo-papyrus).
+
+    Teto de tamanho (`TETO_BYTES_PDF`, 20 MB): checa `Content-Length` antes de baixar e também
+    em streaming durante o download (alguns servidores não mandam esse header, ou mentem) —
+    acima do teto, aborta e avisa em vez de carregar um arquivo grande demais na memória."""
+    global _ultimo_download_pdf_em
+    if httpx is None:
+        raise LeituraPdfFalhou("pacote 'httpx' não instalado")
+    async with _lock_download_pdf:
+        espera = _ESPACAMENTO_MIN_PDF_S - (time.time() - _ultimo_download_pdf_em)
+        if espera > 0:
+            await asyncio.sleep(espera)
+        _ultimo_download_pdf_em = time.time()
+        ultimo_erro: Exception | None = None
+        for tentativa in range(2):  # backoff curto — este host não mostrou WAF/bloqueio
+            try:
+                async with httpx.AsyncClient(timeout=45.0, follow_redirects=True, headers=HEADERS_BASE) as cli:
+                    async with cli.stream("GET", url) as r:
+                        if r.status_code >= 400:
+                            raise LeituraPdfFalhou(f"o host do PDF respondeu HTTP {r.status_code} para {url}")
+                        cl = r.headers.get("content-length")
+                        try:
+                            if cl and int(cl) > TETO_BYTES_PDF:
+                                # números pré-formatados À PARTE: `.replace(",", ".")` na frase
+                                # inteira trocaria também a vírgula literal de "bytes, acima"
+                                # (mesmo erro corrigido em _bloco_inteiro_teor_pdf, 14/09/2026).
+                                _cl_fmt = f"{int(cl):,}".replace(",", ".")
+                                _teto_fmt = f"{TETO_BYTES_PDF:,}".replace(",", ".")
+                                raise LeituraPdfFalhou(
+                                    f"PDF anunciado com {_cl_fmt} bytes, acima do teto de "
+                                    f"{_teto_fmt} bytes desta ferramenta — não baixado; "
+                                    "abra o link no navegador."
+                                )
+                        except ValueError:
+                            pass  # content-length não numérico: segue e confia no corte em streaming
+                        partes = bytearray()
+                        async for chunk in r.aiter_bytes():
+                            partes.extend(chunk)
+                            if len(partes) > TETO_BYTES_PDF:
+                                raise LeituraPdfFalhou(
+                                    f"PDF passou de {TETO_BYTES_PDF:,} bytes durante o download "
+                                    "(interrompido antes de terminar) — abra o link no navegador."
+                                    .replace(",", ".")
+                                )
+                        return bytes(partes)
+            except LeituraPdfFalhou:
+                raise  # erro determinístico (HTTP 4xx/5xx explícito, ou tamanho) — não adianta repetir
+            except Exception as e:  # timeout, conexão recusada, DNS...
+                ultimo_erro = e
+                if tentativa == 0:
+                    await asyncio.sleep(2.0)
+                    continue
+                raise LeituraPdfFalhou(f"falha de rede ao baixar o PDF ({type(e).__name__}: {e})") from e
+        raise LeituraPdfFalhou(f"falha de rede ao baixar o PDF: {ultimo_erro}")
+
+
+async def _ler_inteiro_teor_pdf(s: dict) -> list[str]:
+    """Orquestra a leitura do inteiro teor de UMA decisão: link → cache → download → extração →
+    formatação. Erro de rede vira `[LEITURA DE PDF NÃO REALIZADA — motivo]` (nunca "não
+    encontrado" — a decisão existe, só a leitura automática do PDF falhou); PDF sem texto vira o
+    aviso de `_bloco_inteiro_teor_pdf` (nunca 'inteiro teor lido'). Só resultado de sucesso (com
+    ou sem texto) entra no cache — falha de rede é transitória e não deve "colar"."""
+    link = _corrigir_link_pdf(s.get("linkArquivo") or "")
+    if not link:
+        return [
+            "\nLeitura do inteiro teor (PDF): este acórdão não tem `linkArquivo` informado pelo "
+            "portal — sem link não há como baixar o PDF automaticamente."
+        ]
+    chave = f"id:{s['idDecisao']}" if s.get("idDecisao") is not None else f"link:{hashlib.md5(link.encode()).hexdigest()}"
+    em_cache = _cache_pdf_ler(chave)
+    if em_cache is not None:
+        linhas = _bloco_inteiro_teor_pdf(em_cache)
+        linhas.append("\n(PDF já baixado nesta sessão — reaproveitado do cache, sem nova requisição de rede.)")
+        return linhas
+    try:
+        conteudo = await _baixar_pdf(link)
+    except LeituraPdfFalhou as e:
+        return [f"\n[LEITURA DE PDF NÃO REALIZADA — {e}]"]
+    except Exception as e:
+        return [f"\n[LEITURA DE PDF NÃO REALIZADA — falha inesperada ({type(e).__name__}: {e})]"]
+    resultado = _extrair_texto_pdf(conteudo)
+    if resultado.get("erro"):
+        return [f"\n[LEITURA DE PDF NÃO REALIZADA — falha ao interpretar o PDF ({resultado['erro']})]"]
+    _cache_pdf_gravar(chave, resultado)
+    return _bloco_inteiro_teor_pdf(resultado)
+
+
 async def _relatores_conhecidos(operacao: str) -> tuple[list[dict], str | None]:
     """Lista de {id, nome} de /api/busca/relatores, cacheada por 1h. O `id` não serve para
     filtrar a busca (achado ao vivo — ver references/protocolo-papyrus.md); serve só para
@@ -1242,7 +1489,8 @@ async def _buscar(texto_livre: str | None, numero_acordao: str | None, numero_pr
     return "\n".join(_cortar_bloco(linhas, ORCAMENTO_SAIDA, "resposta da busca"))
 
 
-async def _obter_acordao(id_decisao: int | str | None, numero_acordao: str | None, numero_processo: str | None) -> str:
+async def _obter_acordao(id_decisao: int | str | None, numero_acordao: str | None, numero_processo: str | None,
+                          ler_inteiro_teor: bool = False) -> str:
     # `_texto` no lugar de `if x`: com "   " o teste antigo passava e o filtro ia VAZIO para o
     # portal, que responde com o acervo inteiro (red team 13/09/2026, achado 2).
     id_txt, ac_txt, proc_txt = _texto(id_decisao), _texto(numero_acordao), _texto(numero_processo)
@@ -1291,6 +1539,11 @@ async def _obter_acordao(id_decisao: int | str | None, numero_acordao: str | Non
         linhas.append("\nChame de novo com obter_acordao_tcero(id_decisao=<id acima>) para o detalhe de cada um. Mostrando o primeiro:")
     s0 = (resultados[0].get("source") or {})
     linhas.extend(_detalhe_item(s0))
+    if ler_inteiro_teor:
+        # Só a PRIMEIRA decisão (s0) — quando há mais de uma sob o mesmo número, o detalhe
+        # normal acima já só mostra a primeira; ler o PDF das demais exigiria uma nova chamada
+        # com o id específico, mesmo padrão de "identifique pelo id antes de citar" já usado.
+        linhas.extend(await _ler_inteiro_teor_pdf(s0))
     return "\n".join(_cortar_bloco(linhas, ORCAMENTO_SAIDA, "resposta de obter_acordao"))
 
 
@@ -1497,6 +1750,7 @@ try:
         id_decisao: int | str | None = None,
         numero_acordao: str | None = None,
         numero_processo: str | None = None,
+        ler_inteiro_teor: bool = False,
     ) -> str:
         """Traz o detalhe COMPLETO de uma decisão do TCE-RO: ementa integral, dispositivo
         (`acordaoDescricao`, quando o portal o preenche), informações adicionais e legislação
@@ -1513,11 +1767,38 @@ try:
         da equipe técnica — mas não é o texto do acórdão. NUNCA tratar como fonte primária
         isolada: confira sempre contra a ementa/dispositivo e, quando possível, o inteiro teor.
 
+        ⭐ `ler_inteiro_teor=true` (NOVO, 14/09/2026): baixa o PDF do `linkArquivo` (já corrigido
+        para o host que serve de fato, `tcero.tc.br` — confirmado ao vivo baixando sem login) e
+        EXTRAI O TEXTO REAL com PyMuPDF — relatório e voto completos, não só ementa/dispositivo.
+        É diferente do irmão TRF1, que desiste de propósito porque o inteiro teor lá fica atrás
+        de um desafio Cloudflare: aqui não há esse obstáculo. Quando funciona, a saída inclui
+        uma seção "Inteiro teor (PDF, extraído)" e a linha `Verificação: "inteiro teor lido
+        (PDF)"` — categoria de verificação MAIS FORTE que "só ementa/dispositivo" (é o campo
+        que a ficha de precedente usa; nunca escreva essa frase por conta própria sem esta
+        ferramenta ter de fato devolvido esse texto). Duas formas de NÃO conseguir, sempre
+        ditas explicitamente, nunca disfarçadas de sucesso:
+          • PDF sem camada de texto (provável digitalização/imagem) — a ferramenta NÃO faz OCR
+            (testado antes em processo grande: lento e ainda falhava) e diz isso, sem fingir
+            que leu; a saída não ganha a linha de "inteiro teor lido".
+          • Falha de rede ao baixar (timeout, 404, 5xx) — vira `[LEITURA DE PDF NÃO REALIZADA —
+            motivo]`, nunca "decisão não encontrada" (a decisão existe; só a leitura falhou).
+        Teto de ~45 mil caracteres para o texto extraído (maior que qualquer outro campo deste
+        servidor, porque é o documento inteiro — mas o teto de ~60 mil da resposta INTEIRA
+        continua valendo por cima, e pode cortar dentro do PDF se o resto do detalhe já estiver
+        grande; sempre dito quando ocorre). Cacheado por 1h (por id_decisao) nesta sessão — pedir
+        de novo o mesmo id não baixa o PDF outra vez. Restrito a ESTA ferramenta (não existe em
+        buscar_jurisprudencia_tcero): cada chamada aqui é uma decisão específica do agente, uma
+        por vez — numa busca paginada com muitos itens, o mesmo parâmetro viraria uma avalanche
+        de downloads de uma só vez.
+
         Args:
             id_decisao: Id numérico da decisão (`idDecisao`) — o jeito mais direto e confiável.
             numero_acordao: Número do acórdão (ex.: "00055/26"), se não tiver o id.
             numero_processo: Número do processo administrativo, se não tiver o id nem o
                 número do acórdão (menos preciso — pode trazer várias decisões do mesmo processo).
+            ler_inteiro_teor: Se true, baixa e extrai o texto do PDF do inteiro teor (relatório +
+                voto completos) — ver acima. Custa uma requisição de rede a mais (a um host
+                diferente do portal de busca) na primeira vez; cacheado depois.
 
         Returns:
             Citação pronta, metadados (processo, natureza, objeto, assunto, jurisdicionado,
@@ -1525,9 +1806,12 @@ try:
             ementa integral, dispositivo integral, informações adicionais (com o aviso de IA),
             legislação aplicada e link do PDF do inteiro teor. Saída limitada a ~12 mil
             caracteres por campo de texto, ~40 mil por decisão e ~60 mil na resposta inteira —
-            qualquer corte é dito explicitamente na saída.
+            qualquer corte é dito explicitamente na saída. Com `ler_inteiro_teor=true`: também a
+            seção "Inteiro teor (PDF, extraído)" (até ~45 mil caracteres) com relatório e voto, e
+            a linha `Verificação: "inteiro teor lido (PDF)"` quando a extração teve sucesso — ou
+            o aviso explícito de PDF sem texto / falha de leitura, quando não teve.
         """
-        return await _obter_acordao(id_decisao, numero_acordao, numero_processo)
+        return await _obter_acordao(id_decisao, numero_acordao, numero_processo, ler_inteiro_teor)
 
     @mcp.tool()
     async def verificar_citacao_tcero(
@@ -1542,7 +1826,9 @@ try:
         espaço; intolerante a palavra trocada ou omitida. `[...]` no trecho separa fragmentos
         que devem aparecer nessa ordem. Se vier ❌, não cite entre aspas: parafraseie (sem aspas)
         ou confira o inteiro teor em PDF. NÃO cobre as "informações adicionais" (conteúdo de IA,
-        nunca citável como texto do acórdão) nem o inteiro teor em PDF (este servidor não lê PDF).
+        nunca citável como texto do acórdão) nem o inteiro teor em PDF — para o texto extraído
+        do PDF (relatório+voto), use obter_acordao_tcero(ler_inteiro_teor=true); esta ferramenta
+        continua comparando só contra ementa/dispositivo, não contra o PDF.
 
         Args:
             trecho: Texto que se pretende citar entre aspas (cortes marcados com [...]).
@@ -1759,6 +2045,131 @@ if __name__ == "__main__":
         det_big = "\n".join(_detalhe_item(s_big))
         assert len(det_big) <= ORCAMENTO_DETALHE + 400, len(det_big)
         assert "SAÍDA CORTADA" in det_big or "CORTADO pelo orçamento" in det_big
+
+        # --- 2c. inteiro teor em PDF (14/09/2026) ---
+        # (a) PDF sintético COM texto real, gerado em memória com o próprio fitz — sem rede.
+        if fitz is not None:
+            _doc_ok = fitz.open()
+            _pg_ok = _doc_ok.new_page()
+            _pg_ok.insert_text((72, 72), "RELATÓRIO\nTexto de teste com conteúdo real suficiente "
+                                          "para não cair no limiar de PDF sem texto extraível.")
+            _bytes_ok = _doc_ok.tobytes()
+            _doc_ok.close()
+            r_ok = _extrair_texto_pdf(_bytes_ok)
+            assert r_ok["erro"] is None and not r_ok["sem_texto"] and "RELATÓRIO" in r_ok["texto"], r_ok
+
+            # (b) PDF sintético SEM texto (página em branco) — tem de ACUSAR sem_texto=True, não
+            # fingir que leu. Não faz OCR (fora de escopo, já testado antes e não valeu a pena).
+            _doc_vazio = fitz.open()
+            _doc_vazio.new_page()
+            _bytes_vazio = _doc_vazio.tobytes()
+            _doc_vazio.close()
+            r_vazio = _extrair_texto_pdf(_bytes_vazio)
+            assert r_vazio["erro"] is None and r_vazio["sem_texto"] and r_vazio["texto"] == "", r_vazio
+            bloco_vazio = "\n".join(_bloco_inteiro_teor_pdf(r_vazio))
+            assert "sem texto extraível" in bloco_vazio and "provável digitalização" in bloco_vazio, bloco_vazio
+            assert "inteiro teor lido" not in bloco_vazio, bloco_vazio  # nunca reivindicar sucesso aqui
+
+            # (c) bytes que não são PDF nenhum — erro explícito, não sem_texto silencioso.
+            r_lixo = _extrair_texto_pdf(b"isto nao e um pdf")
+            assert r_lixo["erro"] is not None and not r_lixo["sem_texto"], r_lixo
+
+            # (d) formatação de sucesso + truncamento pelo ORCAMENTO_PDF.
+            r_sucesso = {"texto": "Relatório. " * 2000, "paginas": 3, "chars_nao_espaco": 9000, "sem_texto": False, "erro": None}
+            bloco_ok = "\n".join(_bloco_inteiro_teor_pdf(r_sucesso))
+            assert "inteiro teor lido (PDF)" in bloco_ok and "Relatório." in bloco_ok, bloco_ok[:300]
+            r_grande = {"texto": "palavra " * 20_000, "paginas": 40, "chars_nao_espaco": 140_000, "sem_texto": False, "erro": None}
+            bloco_grande = "\n".join(_bloco_inteiro_teor_pdf(r_grande))
+            assert len(bloco_grande) <= ORCAMENTO_PDF + 600, len(bloco_grande)
+            assert "CORTADO pelo orçamento de caracteres do PDF" in bloco_grande, bloco_grande[-300:]
+
+            # (e) cache do texto extraído: TTL e reaproveitamento.
+            _cache_pdf_limpar()
+            assert _cache_pdf_ler("x") is None
+            _cache_pdf_gravar("x", r_ok)
+            assert _cache_pdf_ler("x") == r_ok
+            _cache_pdf.clear()
+            _cache_pdf["x"] = (time.time() - _CACHE_PDF_TTL_S - 1, r_ok)
+            assert _cache_pdf_ler("x") is None, "TTL do cache de PDF não expirou"
+            _cache_pdf_limpar()
+
+            # (f) fixtures REAIS baixadas ao vivo em 13-14/09/2026 (fixtures/pdf/*.pdf, ver
+            # references/protocolo-papyrus.md) — prova de que a extração traz conteúdo que NÃO
+            # está na ementa (relatório e voto), não apenas o resumo que a API JSON já trazia.
+            _fx_pdf = os.path.join(fx, "pdf")
+            for _id_fx, _arquivo_json, _termo_ausente_da_ementa in (
+                (98114, "01_busca_numeroProcesso.json", "RELATÓRIO"),
+                (85572, "01_busca_numeroProcesso.json", "VOTO"),
+            ):
+                _caminho_pdf = os.path.join(_fx_pdf, f"{_id_fx}.pdf")
+                assert os.path.exists(_caminho_pdf), f"fixture ausente: {_caminho_pdf} (ver fixtures/pdf/)"
+                with open(_caminho_pdf, "rb") as _fpdf:
+                    _conteudo_real = _fpdf.read()
+                _d_fx = _ler(_arquivo_json)
+                _s_fx = next(item["source"] for item in _d_fx["result"] if item["source"]["idDecisao"] == _id_fx)
+                _ementa_fx = _s_fx.get("ementa") or ""
+                _r_fx = _extrair_texto_pdf(_conteudo_real)
+                assert _r_fx["erro"] is None and not _r_fx["sem_texto"], (_id_fx, _r_fx.get("erro"))
+                assert _r_fx["paginas"] > 0 and len(_r_fx["texto"]) > len(_ementa_fx) * 3, (
+                    _id_fx, _r_fx["paginas"], len(_r_fx["texto"]), len(_ementa_fx)
+                )
+                # a prova de verdade: o PDF trouxe uma palavra-chave estrutural (RELATÓRIO/VOTO)
+                # que a ementa (só o resumo) nunca tem — estruturalmente diferente, não é ilusão.
+                assert _termo_ausente_da_ementa not in _ementa_fx, (_id_fx, _ementa_fx[:200])
+                assert _termo_ausente_da_ementa in _r_fx["texto"], (_id_fx, _termo_ausente_da_ementa)
+                _bloco_fx = "\n".join(_bloco_inteiro_teor_pdf(_r_fx))
+                assert "inteiro teor lido (PDF)" in _bloco_fx, _bloco_fx[-300:]
+
+            # (g) ponta a ponta: _obter_acordao com ler_inteiro_teor=True, _baixar_pdf mockado
+            # devolvendo o PDF real de id 98114 (fixtures/pdf/98114.pdf) — sem tocar a rede.
+            with open(os.path.join(_fx_pdf, "98114.pdf"), "rb") as _fpdf:
+                _conteudo_98114 = _fpdf.read()
+
+            async def _baixar_pdf_fake_ok(url):
+                return _conteudo_98114
+
+            async def _baixar_pdf_fake_falha(url):
+                raise LeituraPdfFalhou("falha de rede ao baixar o PDF (ConnectError simulado)")
+
+            _orig_baixar_pdf = globals()["_baixar_pdf"]
+            _orig_consultar_id = globals()["_consultar_api"]
+
+            async def _consultar_id_fake(params, operacao):
+                return d_id  # fixtures/03_busca_idDecisao.json — idDecisao 98114
+
+            globals()["_consultar_api"] = _consultar_id_fake
+            try:
+                _cache_pdf_limpar()
+                globals()["_baixar_pdf"] = _baixar_pdf_fake_ok
+                saida_pdf = asyncio.run(_obter_acordao(98114, None, None, True))
+                assert "Inteiro teor (PDF, extraído)" in saida_pdf, saida_pdf[-500:]
+                assert "Verificação: \"inteiro teor lido (PDF)\"" in saida_pdf, saida_pdf[-500:]
+                assert "RELATÓRIO" in saida_pdf or "relatório" in saida_pdf.lower(), saida_pdf[-2000:]
+                # segunda chamada: cache, sem chamar _baixar_pdf de novo (troca por uma que falha)
+                globals()["_baixar_pdf"] = _baixar_pdf_fake_falha
+                saida_pdf_cache = asyncio.run(_obter_acordao(98114, None, None, True))
+                assert "reaproveitado do cache" in saida_pdf_cache, saida_pdf_cache[-500:]
+                assert "LEITURA DE PDF NÃO REALIZADA" not in saida_pdf_cache, saida_pdf_cache[-500:]
+                # sem ler_inteiro_teor: comportamento antigo, sem a seção nova
+                saida_sem_pdf = asyncio.run(_obter_acordao(98114, None, None, False))
+                assert "Inteiro teor (PDF, extraído)" not in saida_sem_pdf, saida_sem_pdf[-300:]
+                # erro de rede: nunca "não encontrado" — sempre o rótulo de leitura não realizada
+                _cache_pdf_limpar()
+                globals()["_baixar_pdf"] = _baixar_pdf_fake_falha
+                saida_falha = asyncio.run(_obter_acordao(98114, None, None, True))
+                assert "[LEITURA DE PDF NÃO REALIZADA" in saida_falha, saida_falha[-500:]
+                assert "não encontrada" not in saida_falha.split("Inteiro teor")[-1], saida_falha[-500:]
+                assert "Verificação: \"inteiro teor lido (PDF)\"" not in saida_falha, saida_falha[-500:]
+            finally:
+                globals()["_baixar_pdf"] = _orig_baixar_pdf
+                globals()["_consultar_api"] = _orig_consultar_id
+                _cache_pdf_limpar()
+
+            # (h) sem linkArquivo: aviso claro, sem tentar rede nenhuma.
+            saida_sem_link = "\n".join(asyncio.run(_ler_inteiro_teor_pdf({"idDecisao": 1})))
+            assert "não tem `linkArquivo`" in saida_sem_link, saida_sem_link
+        else:
+            print("pymupdf (fitz) não instalado — pulando regressão de inteiro teor em PDF")
 
         # --- 3. disjuntor (estado em arquivo temporário) ---
         globals()["_ARQUIVO_ESTADO_DISJUNTOR"] = os.path.join(_tempfile.gettempdir(), "_selftest_disjuntor_tcero.json")
@@ -2092,6 +2503,8 @@ if __name__ == "__main__":
                 print((await _buscar(None, None, "02603/22", None, None, 1, 5, False))[:3000])
                 print("\n=== obter_acordao online (id direto) ===")
                 print((await _obter_acordao(98114, None, None))[:3000])
+                print("\n=== obter_acordao online, ler_inteiro_teor=True (baixa e extrai o PDF) ===")
+                print((await _obter_acordao(98114, None, None, True))[-3000:])
                 print("\n=== busca online: relator (resolvido por aproximação) + órgão ===")
                 print((await _buscar(None, None, None, "jose euler potyguara pereira de mello", "pleno", 1, 3, False))[:2500])
                 print("\n=== verificar_citacao online ===")
