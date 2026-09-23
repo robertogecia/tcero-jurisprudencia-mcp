@@ -1,15 +1,179 @@
-# MCP — Jurisprudência do TCE-RO (portal ePapyrus)
+# Jurisprudência do TCE-RO no Claude
 
-Servidor MCP que pesquisa a jurisprudência do **TCE-RO** (Tribunal de Contas do Estado
-de Rondônia) no portal oficial ePapyrus (`https://papyrus.tcero.tc.br/`), sem login. Irmão dos
-servidores do [TJRO](https://github.com/robertogecia/tjro-jurisprudencia-mcp) e do
-[TRF1](https://github.com/robertogecia/trf1-jurisprudencia-mcp) — mesma disciplina (disjuntor
-compartilhado entre processos, citação pronta, paginação segura), API bem mais simples: JSON
-puro, sem WAF, sem sessão, sem ViewState.
+[![tests](https://github.com/robertogecia/tcero-jurisprudencia-mcp/actions/workflows/test.yml/badge.svg)](https://github.com/robertogecia/tcero-jurisprudencia-mcp/actions/workflows/test.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Criado em 13/09/2026; versão atual na primeira linha do `diagnostico_ritmo_tcero`. **Instalação: seção "Instalar" abaixo.** Contrato completo da API (achados ao vivo, inclusive o que diverge do
-que se supunha antes de testar) em `references/protocolo-papyrus.md`; respostas cruas reais em
-`fixtures/`.
+Isto ensina qualquer advogado — **sem conhecimento nenhum de informática** — a dar ao Claude a
+capacidade de pesquisar a jurisprudência do **Tribunal de Contas do Estado de Rondônia (TCE-RO)**
+dentro da própria conversa, sem abrir o portal do tribunal. Sem login, sem senha e sem mexer em
+código. Serve para quem atua em licitação e contrato administrativo, prestação de contas,
+responsabilização de gestor, multa e débito, ato de pessoal (aposentadoria, pensão, admissão) e
+representação perante a Corte de Contas.
+
+## Antes de começar: você já tem o "Claude Desktop"?
+
+O "Claude Desktop" é o **programa** do Claude que você instala no computador (diferente de usar o
+Claude pelo site, no navegador). É ele que faz a pesquisa funcionar — sem ele instalado, nada dos
+passos abaixo funciona.
+
+- **Já tenho** (uso o Claude num aplicativo separado, não numa aba do navegador) → pule para o
+  "Passo 1".
+- **Não sei, ou uso só pelo navegador** → baixe primeiro o programa em
+  **[claude.com/download](https://claude.com/download)**, instale, entre com a sua conta e volte
+  aqui.
+
+## Instalar a pesquisa do TCE-RO (3 passos, uns 2 minutos)
+
+### Passo 1 — Baixe o arquivo
+
+### ⬇️ [CLIQUE AQUI PARA BAIXAR (`Jurisprudencia-TCERO.mcpb`)](https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest/download/Jurisprudencia-TCERO.mcpb)
+
+Um arquivo chamado `Jurisprudencia-TCERO.mcpb` (uns 21 MB) vai para a pasta **Downloads** (ou
+"Transferências") do seu computador — o mesmo lugar onde caem os PDFs que você baixa da internet.
+Você não precisa abri-lo agora, só saber onde ele está.
+
+> **⚠️ Atenção a um erro comum:** se em vez de clicar no botão acima você navegou até a página
+> principal do projeto no GitHub e clicou no botão verde **"Code" → "Download ZIP"**, isso baixou
+> o arquivo errado (o código-fonte do programa, que não serve para instalar). Apague esse zip e
+> use só o link do botão acima.
+
+### Passo 2 — Abra o arquivo baixado
+
+1. Abra a pasta **Downloads** do seu computador (no Mac, o ícone de seta para baixo na barra de
+   baixo da tela costuma abrir direto nela; no Windows, é "Este Computador" → "Downloads").
+2. Procure o arquivo **`Jurisprudencia-TCERO.mcpb`** e **dê dois cliques** nele, como faria para
+   abrir uma foto ou um PDF.
+3. O Claude Desktop deve abrir sozinho, numa tela perguntando se você quer instalar a extensão
+   "Jurisprudência TCE-RO". Clique em **Instalar** (ou "Install").
+
+   *Se nada abrir:* abra você mesmo o Claude Desktop, vá em **Configurações** (o ícone de
+   engrenagem) → **Extensões**, e arraste o arquivo `Jurisprudencia-TCERO.mcpb` para dentro dessa
+   janela com o mouse.
+
+### Passo 3 — Confirme e teste
+
+1. Se o Claude Desktop pedir para **reiniciar**, feche e abra o programa de novo.
+2. Comece uma **conversa nova** (importante: conversa aberta antes da instalação não enxerga a
+   extensão).
+3. Digite algo como:
+   > *pesquise no TCE-RO acórdãos sobre dispensa de licitação por emergência*
+4. O Claude vai perguntar se pode usar a ferramenta de pesquisa do TCE-RO — é sinal de que
+   funcionou. Autorize, e a busca aparece na conversa.
+
+**Pronto.** Você não precisa instalar mais nada: o Claude Desktop já traz tudo o que a extensão
+precisa para rodar. Funciona em computador **Mac ou Windows**. Em celular ou tablet, e no Claude
+pelo site (sem o programa), esta pesquisa não funciona — veja ["Onde funciona"](#onde-funciona).
+
+## Como vai funcionar no dia a dia
+
+Você pede em português, como pediria a um estagiário, e o Claude usa a extensão por conta própria:
+
+> "Pesquise no TCE-RO acórdãos sobre reincidência no descumprimento de determinação da Corte."
+>
+> "Há decisão do Pleno sobre contratação temporária sem concurso? Quero as mais pertinentes."
+>
+> "Abra o acórdão APL-TC 00055/26 e leia o inteiro teor."
+>
+> "Esse trecho que você citou está mesmo no acórdão? Confira."
+
+O que você recebe de volta:
+
+- **Uma lista de decisões, as mais pertinentes primeiro.** O portal do tribunal ordena só por
+  data; a extensão reordena pelo tanto que cada decisão fala do seu assunto e diz, em cada uma,
+  quantos dos seus termos ela contém. Cada item já vem com a **citação pronta** (sigla, número,
+  relator, órgão, data), o resumo da ementa e o **link direto para o PDF** do acórdão no site do
+  tribunal.
+- **Um panorama da busca**, quando há três ou mais decisões: quantas são do Pleno e de cada
+  Câmara, de que anos, de que tipo, e quais relatores mais aparecem. É um indício para escolher o
+  que ler, nunca uma conclusão sobre a tese.
+- **O acórdão inteiro**, não só a ementa: a extensão baixa o PDF do próprio tribunal e extrai o
+  relatório e o voto. Quando o acórdão é longo demais para caber de uma vez, ela entrega o começo
+  e o fim e **avisa que leu "em parte"** — nesse caso ela serve para citar o que está ali, mas não
+  para afirmar que algo *não* consta do acórdão.
+- **Conferência antes das aspas.** Peça para conferir um trecho e a extensão diz se ele está
+  literalmente na ementa, no dispositivo ou no inteiro teor. Se está, ainda avisa **de quem é a
+  frase**: acórdão de contas transcreve o parecer do Ministério Público de Contas, o relatório do
+  corpo técnico e a defesa do gestor, e um trecho literal pode ser a alegação da parte, não a
+  posição da Corte.
+- **Um recibo guardado no seu computador** com o texto que o tribunal entregou, toda vez que uma
+  decisão é aberta. Serve para provar depois, a olho ou por script, que a citação da peça veio do
+  documento — e não da imaginação da IA.
+
+## O que ela NÃO faz (leia antes de confiar)
+
+- **Não substitui a leitura do acórdão.** A citação pronta, o resumo e o panorama são ponto de
+  partida. Confirme número, relator, órgão, data e o sentido do julgado no PDF antes de levar para
+  a peça — é para isso que o link vem em cada resultado.
+- **O portal traz um resumo feito com inteligência artificial pelo próprio tribunal** (a seção
+  "informações adicionais": fatos, questão, regras, análise, conclusão). A extensão mostra esse
+  texto sempre com aviso, **nunca** o usa para confirmar uma citação, e você também não deve
+  citá-lo como se fosse o acórdão.
+- **Não lê acórdão digitalizado como imagem** (PDF sem texto). Ela avisa e você abre o link no
+  navegador.
+- **Não pesquisa outros tribunais.** TJRO, TRF1, STJ e outros têm extensões próprias do mesmo
+  autor; superação de entendimento vinda de cima (TCU, STF) se confere na fonte respectiva.
+- **Não dá parecer.** Toda saída é rascunho para a sua revisão; a decisão sobre tese, pedido e
+  protocolo é sua.
+
+## Algo deu errado? Veja aqui antes de pedir ajuda
+
+| O que aconteceu | O que fazer |
+|---|---|
+| Baixei um arquivo, mas quando abro vira uma **pasta cheia de arquivos**, e não a tela de instalação | Você baixou o arquivo errado (o código-fonte, não o instalador). Volte ao topo e use o botão **"CLIQUE AQUI PARA BAIXAR"**. |
+| Dei dois cliques no `.mcpb` e **não abriu nada** | Use o caminho alternativo do Passo 2: Claude Desktop → Configurações → Extensões, e arraste o arquivo para essa janela. |
+| Instalei, mas o Claude diz que **não tem essa ferramenta** | Abra uma **conversa nova**. Confira também se a extensão aparece **ativada** em Configurações → Extensões. |
+| A busca devolve **zero** quando filtro por relator ou por órgão | O portal exige o nome **exatamente** como ele conhece e devolve vazio sem avisar. A extensão diz quando não reconheceu o filtro e lista os valores aceitos: corrija antes de concluir que "não há jurisprudência". |
+| A extensão diz que o PDF **não tem texto** | O acórdão foi digitalizado como imagem. Abra o link do PDF no navegador e leia lá. |
+| Apareceu uma mensagem dizendo para **esperar alguns minutos** | Não é defeito: a extensão se impõe um limite de consultas por cortesia com o servidor do tribunal. Espere o tempo indicado. |
+| Erro de rede em toda busca, mas o portal abre no navegador | O tribunal pode ter mudado o portal. Veja se há [versão nova](https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest) (a própria mensagem de erro avisa quando há) e, se não houver, [relate o problema](../../issues). |
+| Não tenho o Claude Desktop, só uso pelo site ou pelo celular | A pesquisa **não funciona** nesses casos — precisa do programa instalado no computador. |
+| Nenhuma linha acima resolveu | Peça ajuda a alguém do escritório com mais prática em informática mostrando esta tabela — ou [abra uma issue](../../issues) descrevendo o que aconteceu (sem nome de parte nem número de processo: a página é pública). |
+
+## Atualizar e desinstalar
+
+- **Atualizar:** quando sair versão nova, a primeira resposta da conversa avisa. Baixe o arquivo
+  novo pelo mesmo botão do Passo 1 e instale por cima; a versão antiga é substituída.
+- **Desinstalar:** Claude Desktop → Configurações → Extensões → "Jurisprudência TCE-RO" →
+  Remover. Se quiser, apague também a pasta de recibos `.tcero-jurisprudencia-recibos` na sua
+  pasta de usuário.
+
+## Reportar erro, pedir melhoria
+
+- **Erro**: a própria mensagem de erro traz um link que abre o formulário de relato no GitHub já
+  preenchido com os dados técnicos (versão, sistema, tipo do erro). **Nada da sua pesquisa vai
+  junto**, e você revisa antes de enviar. Ou [abra uma issue](../../issues/new) à mão.
+- **Sugestão**: [issue](../../issues/new) também. Diga o que tentou pesquisar (em abstrato — sem
+  nome de parte nem número de processo, as issues são públicas) e o que esperava.
+- Precisa de conta gratuita no GitHub. O autor mantém isto no tempo livre; a resposta pode
+  demorar.
+
+## Apoie o projeto
+
+A extensão é gratuita e de código aberto, e é mantida no tempo livre de um advogado: cada
+mudança do portal do TCE-RO exige diagnóstico, correção, testes e versão nova. Se ela economiza o
+seu tempo, você pode apoiar a continuidade do trabalho com qualquer valor, por **Pix**:
+
+> **Chave Pix (e-mail):** `robertogrecia@hotmail.com`
+
+O apoio é voluntário e não muda nada no uso: a extensão continua igual para todos.
+
+## Autor
+
+**Roberto Grécia Bessa** — OAB/RO 7865-A
+Instagram: [@robertogrecia](https://instagram.com/robertogrecia)
+
+Irmã das extensões de jurisprudência do [TJRO](https://github.com/robertogecia/tjro-jurisprudencia-mcp),
+do [TRF1](https://github.com/robertogecia/trf1-jurisprudencia-mcp) e do
+[TJSE](https://github.com/robertogecia/mcp-tjse-jurisprudencia), do mesmo autor. Licença MIT —
+veja [LICENSE](LICENSE).
+
+---
+
+# Para quem programa (ou quer entender por dentro)
+
+Daqui para baixo o texto é técnico: como o servidor Python funciona, o que foi medido ao vivo,
+como instalar pelo Claude Code, segurança e auditoria. Um advogado que só quer usar a extensão
+não precisa ler nada disto.
 
 ## Ferramentas
 
@@ -444,7 +608,7 @@ claude mcp add tcero_jurisprudencia -- /caminho/para/tcero-jurisprudencia-mcp/.v
 
 Conversa antiga não percebe o servidor novo. Numa conversa nova, peça algo como *"pesquise no TCE-RO acórdãos sobre dispensa de licitação por emergência"* — o Claude deve chamar `buscar_jurisprudencia_tcero`. Se quiser ver que o servidor está de pé sem gastar nenhuma consulta, peça o `diagnostico_ritmo_tcero`: a primeira linha traz a versão instalada.
 
-## Algo deu errado? Veja aqui antes de pedir ajuda
+## Algo deu errado? (instalação pelo Python)
 
 | O que aconteceu | O que fazer |
 |---|---|
@@ -465,7 +629,7 @@ O portal do TCE-RO **não tem WAF, captcha nem login** (confirmado em todos os t
 - **Limite de ritmo da própria ferramenta.** Ela se impõe um teto de consultas por minuto, por cortesia com o servidor do tribunal (o portal não documenta limite nenhum). O erro diz quanto esperar; esse erro **não** traz link de relato, porque se resolve esperando.
 - **Sem internet, ou o portal fora do ar.** A mensagem distingue os dois casos.
 
-## Reportar erro, pedir melhoria
+## Reportar erro (detalhes técnicos)
 
 - **Erro**: use o link que vem na própria mensagem de erro (abre o formulário de issue do GitHub já preenchido com versão, sistema operacional, tipo do erro e estado do limitador — **nada da sua pesquisa vai junto**, e você revisa antes de enviar). Ou [abra uma issue](../../issues/new) à mão com esses mesmos dados.
 - **Sugestão**: [issue](../../issues/new) também. Diga o que você tentou pesquisar (em abstrato — sem nome de parte nem número de processo, as issues são públicas) e o que esperava.
@@ -483,7 +647,7 @@ Pensado para ser fácil de verificar antes de instalar, não só "confie em mim"
 - **Quando algo dá errado, a própria mensagem diz o que fazer** — se há versão nova, e como relatar (ver "Reportar erro").
 - **Um arquivo, legível.** Toda a lógica está em [`servidor_tcero.py`](servidor_tcero.py); o `--selftest` roda offline contra respostas reais gravadas em `fixtures/`. Os red teams que auditaram o código, com os achados e o que foi corrigido, estão em [`references/`](references/).
 
-## Atualizar
+## Atualizar (Python)
 
 ```bash
 cd /caminho/para/tcero-jurisprudencia-mcp && git pull
@@ -491,7 +655,7 @@ cd /caminho/para/tcero-jurisprudencia-mcp && git pull
 
 Depois, reinicie o Claude (Code ou Desktop). Se o `pip` de dependências mudou, o README da versão nova diz.
 
-## Desinstalar
+## Desinstalar (Python)
 
 Claude Code: `claude mcp remove tcero_jurisprudencia`. Claude Desktop: apague o bloco `tcero_jurisprudencia` do `claude_desktop_config.json`. Depois apague a pasta clonada e, se quiser, `~/.tcero-jurisprudencia-recibos/`.
 
@@ -545,22 +709,3 @@ processo ou nome de parte).
   (Justiça Federal, portal JSF do CJF). Este é o **TCE-RO** — Tribunal de Contas, controle
   externo (licitação, prestação de contas, responsabilização de gestor) — tribunal e
   jurisdição diferentes dos outros dois.
-
-## Apoie o projeto
-
-O servidor é gratuito e de código aberto, e é mantido no tempo livre de um advogado: cada mudança do portal do TCE-RO exige diagnóstico, correção, testes e versão nova. Se ele economiza o seu tempo, você pode apoiar a continuidade do trabalho com qualquer valor, por **Pix**:
-
-> **Chave Pix (e-mail):** `robertogrecia@hotmail.com`
-
-O apoio é voluntário e não muda nada no uso: o servidor continua igual para todos.
-
-## Autor
-
-**Roberto Grécia Bessa** — OAB/RO 7865-A
-Instagram: [@robertogrecia](https://instagram.com/robertogrecia)
-
-Irmão dos servidores de jurisprudência do [TJRO](https://github.com/robertogecia/tjro-jurisprudencia-mcp) e do [TRF1](https://github.com/robertogecia/trf1-jurisprudencia-mcp), do mesmo autor.
-
-## Licença
-
-MIT — veja [LICENSE](LICENSE).
