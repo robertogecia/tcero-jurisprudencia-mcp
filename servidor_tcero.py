@@ -115,7 +115,7 @@ HEADERS_BASE = {
 # Primeiro release com recibo de custódia + alertas de atribuição (itens 1-5  #
 # desta rodada): 1.0.x é o que já está publicado; 1.1.0 é este.               #
 # --------------------------------------------------------------------------- #
-VERSAO = "1.1.0"
+VERSAO = "1.2.0"
 RELEASES_API = "https://api.github.com/repos/robertogecia/tcero-jurisprudencia-mcp/releases/latest"
 RELEASES_PAGINA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest"
 ISSUES_NOVA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/issues/new"
@@ -1497,14 +1497,25 @@ def _orgao_do_fecho(texto: str) -> str | None:
     `fixtures/pdf/` no --selftest, mas propositalmente NÃO chamada por nenhuma ferramenta — com
     N=4 não há base para trocar a fonte da citação; ver a tabela id×cadastro×fecho no README/
     resumo da tarefa."""
-    m = _RE_ORGAO_FECHO.search(texto or "")
-    if not m:
+    matches = list(_RE_ORGAO_FECHO.finditer(texto or ""))
+    if not matches:
         return None
-    bruto = re.sub(r"\s+", " ", m.group(1)).strip()
-    for conhecido in ORGAOS_JULGADORES_CONHECIDOS:
-        if _fold(conhecido) == _fold(bruto):
-            return conhecido
-    return bruto  # não bateu com a lista fechada — devolve cru, sem inventar rótulo
+
+    def _normalizar(bruto_m: str) -> str:
+        bruto_m = re.sub(r"\s+", " ", bruto_m).strip()
+        for conhecido in ORGAOS_JULGADORES_CONHECIDOS:
+            if _fold(conhecido) == _fold(bruto_m):
+                return conhecido
+        return bruto_m  # não bateu com a lista fechada — devolve cru, sem inventar rótulo
+
+    orgaos = {_fold(_normalizar(m.group(1))) for m in matches}
+    if len(orgaos) > 1:
+        # Mais de um fecho, de órgãos DIFERENTES, no mesmo PDF — típico de acórdão de
+        # embargos/recurso que transcreve o fecho do acórdão embargado. Sem saber qual é o
+        # fecho "de verdade" desta decisão, devolver None é mais seguro que escolher um dos
+        # dois (achado do porte 22/09/2026, item 6).
+        return None
+    return _normalizar(matches[0].group(1))
 
 
 # --------------------------------------------------------------------------- #
@@ -1627,6 +1638,117 @@ def _filtrar_por_grupos(resultados: list[dict], grupos: list[list[str]]) -> tupl
         if so_ia:
             avisos_ia[s.get("idDecisao")] = so_ia
     return filtrados, avisos_ia
+
+
+# --------------------------------------------------------------------------- #
+# Ranking por relevância (item 3, porte 22/09/2026) — offline, no cliente,     #
+# sobre a resposta já baixada. O portal só ordena por data (ver docstring de   #
+# buscar_jurisprudencia_tcero); para quem faz busca ampla e quer os itens      #
+# mais prováveis primeiro, `ordenar="relevancia"` conta TERMOS DISTINTOS da    #
+# consulta presentes em cada decisão — ementa+dispositivo pesam 2, informações #
+# adicionais (texto de IA) pesam 1 — e ordena por essa pontuação, desempatando #
+# por data. Decisão sobre tornar isto padrão está em harness/medicao-2026-09-  #
+# 22.md (ver também o docstring da tool).                                     #
+# --------------------------------------------------------------------------- #
+
+def _termos_da_consulta(texto_livre: str | None, grupos: list[list[str]] | None) -> list[str]:
+    """Lista de termos DISTINTOS (ordem estável, sem repetição) usados para pontuar relevância:
+    todo termo de todo grupo, mais as palavras soltas de texto_livre (cada palavra separada por
+    espaço vira um termo simples — mesma unidade que `_termo_casa` já sabe casar)."""
+    vistos: list[str] = []
+    vistos_fold: set[str] = set()
+
+    def _add(t: str) -> None:
+        t = (t or "").strip()
+        if not t:
+            return
+        f = _fold(t)
+        if f in vistos_fold:
+            return
+        vistos_fold.add(f)
+        vistos.append(t)
+
+    for grupo in (grupos or []):
+        for t in grupo:
+            _add(t)
+    for palavra in _RE_ESPACO.split((texto_livre or "").strip()):
+        _add(palavra)
+    return vistos
+
+
+def _pontuar_relevancia(s: dict, termos: list[str]) -> tuple[int, int]:
+    """(pontuação, termos casados no núcleo) para uma decisão: núcleo (ementa+dispositivo) pesa
+    2 por termo distinto casado, informações adicionais (IA) pesa 1 — separado para que o
+    desempate e o rótulo "termos casados: N/M" reflitam só o núcleo quando quem chama quiser."""
+    nucleo, ia = _campos_casamento(s)
+    pontos = 0
+    no_nucleo = 0
+    for t in termos:
+        casou_nucleo = _termo_casa(nucleo, t)
+        casou_ia = _termo_casa(ia, t)
+        if casou_nucleo:
+            pontos += 2
+            no_nucleo += 1
+        elif casou_ia:
+            pontos += 1
+    return pontos, no_nucleo
+
+
+def _ordenar_por_relevancia(resultados: list[dict], termos: list[str]) -> list[dict]:
+    """Ordena uma CÓPIA da lista (nunca o array cacheado — mesma disciplina de
+    `_filtrar_por_grupos`) por pontuação de relevância desc, desempatando por data desc. Ordem
+    estável: dois itens com a mesma pontuação e a mesma data mantêm a ordem relativa original
+    (sort é estável em Python; a chave usa só valores decrescentes via negação/reverso de
+    string ISO, não `reverse=True`, para não inverter também os empates)."""
+    if not termos:
+        return list(resultados)
+    # Duas passadas estáveis em vez de uma chave composta: a 1ª ordena por data desc (mesmo
+    # critério do portal), a 2ª por pontuação desc — como sort() é estável, o resultado final
+    # é "pontuação desc, desempatando por data desc", sem precisar inverter uma string ISO.
+    copia = sorted(list(resultados), key=lambda item: (item.get("source") or {}).get("data") or "", reverse=True)
+    copia.sort(key=lambda item: _pontuar_relevancia(item.get("source") or {}, termos)[0], reverse=True)
+    return copia
+
+
+def _bloco_panorama(resultados: list[dict]) -> list[str]:
+    """Facetas offline sobre as decisões desta busca (só página 1, só com >= 3 decisões — ver
+    tool): contagem por órgão julgador, ano, sigla, natureza e os 5 relatores mais frequentes.
+    Campo ausente conta como 'sem informação'; nada inventado — nomes exatamente como o
+    cadastro do TCE-RO os grava em `source`."""
+    from collections import Counter
+
+    orgaos: Counter = Counter()
+    anos: Counter = Counter()
+    siglas: Counter = Counter()
+    naturezas: Counter = Counter()
+    relatores: Counter = Counter()
+    for item in resultados:
+        s = item.get("source") or {}
+        orgaos[s.get("orgaoJulgador") or "sem informação"] += 1
+        data = s.get("data") or ""
+        anos[data[:4] if len(data) >= 4 and data[:4].isdigit() else "sem informação"] += 1
+        siglas[s.get("sigla") or "sem informação"] += 1
+        naturezas[s.get("natureza") or "sem informação"] += 1
+        relatores[s.get("relator") or "sem informação"] += 1
+
+    def _fmt(contador, topo: int | None = None) -> str:
+        if isinstance(contador, Counter):
+            itens = contador.most_common(topo)
+        else:
+            itens = list(contador.items())[:topo] if topo else list(contador.items())
+        return "; ".join(f"{k} ({v})" for k, v in itens)
+
+    n = len(resultados)
+    linhas = [
+        f"\n**Panorama (offline, sobre as {n} decisões desta busca — indício para escolher o "
+        "que ler, nunca conclusão sobre a tese):**",
+        f"- Órgão julgador: {_fmt(orgaos)}",
+        f"- Ano: {_fmt(dict(sorted(anos.items(), key=lambda kv: kv[0], reverse=True)))}",
+        f"- Sigla: {_fmt(siglas)}",
+        f"- Natureza: {_fmt(naturezas)}",
+        f"- Relatores mais frequentes: {_fmt(relatores, 5)}",
+    ]
+    return linhas
 
 
 # --------------------------------------------------------------------------- #
@@ -2221,7 +2343,9 @@ def _resolver_orgao(orgao: str) -> tuple[str, str | None]:
 # --------------------------------------------------------------------------- #
 async def _buscar(texto_livre: str | None, numero_acordao: str | None, numero_processo: str | None,
                   relator: str | None, orgao_julgador: str | None, pagina: int, por_pagina: int,
-                  detalhar: bool, grupos: list[list[str]] | None = None) -> str:
+                  detalhar: bool, grupos: list[list[str]] | None = None, ordenar: str = "relevancia") -> str:
+    if ordenar not in ("data", "relevancia"):
+        return f"ordenar inválido: {ordenar!r}; use 'data' ou 'relevancia'. Nenhuma requisição foi feita."
     avisos: list[str] = []
     filtros_nao_resolvidos: list[str] = []
     grupos_ok = _grupos_validos(grupos)
@@ -2279,6 +2403,9 @@ async def _buscar(texto_livre: str | None, numero_acordao: str | None, numero_pr
     else:
         total_bruto = None
         todos = todos_brutos
+    termos_relevancia = _termos_da_consulta(texto_livre, grupos_ok) if ordenar == "relevancia" else []
+    if ordenar == "relevancia" and termos_relevancia:
+        todos = _ordenar_por_relevancia(todos, termos_relevancia)
     total = len(todos)
     inicio = (pagina - 1) * por_pagina
     pagina_itens = todos[inicio: inicio + por_pagina]
@@ -2286,14 +2413,15 @@ async def _buscar(texto_livre: str | None, numero_acordao: str | None, numero_pr
 
     linhas: list[str] = []
     filtros_txt = _truncar("; ".join(f"{k}={v}" for k, v in params.items()), 300)
+    ordem_txt = "por relevância (offline, termos da consulta)" if ordenar == "relevancia" else "por data (padrão do portal)"
     if grupos_ok:
         cab = (
             f"**{total_bruto} decisão(ões)** no portal ePapyrus/TCE-RO (OU nativo) para "
             f"`{filtros_txt}` → **{total}** após exigir todos os {len(grupos_ok)} grupo(s) · "
-            f"página {pagina}/{total_paginas} ({por_pagina} por página)"
+            f"página {pagina}/{total_paginas} ({por_pagina} por página) · ordenado {ordem_txt}"
         )
     else:
-        cab = f"**{total} decisão(ões)** no portal ePapyrus/TCE-RO para `{filtros_txt}` · página {pagina}/{total_paginas} ({por_pagina} por página)"
+        cab = f"**{total} decisão(ões)** no portal ePapyrus/TCE-RO para `{filtros_txt}` · página {pagina}/{total_paginas} ({por_pagina} por página) · ordenado {ordem_txt}"
     linhas.append(cab)
     for a in avisos:
         linhas.append(f"⚠️ {a}")
@@ -2332,6 +2460,9 @@ async def _buscar(texto_livre: str | None, numero_acordao: str | None, numero_pr
             linhas.extend(_detalhe_item(s))
         else:
             linhas.extend(_resumo_item(s, i))
+        if ordenar == "relevancia" and termos_relevancia:
+            _, no_nucleo = _pontuar_relevancia(s, termos_relevancia)
+            linhas.append(f"  termos casados: {no_nucleo}/{len(termos_relevancia)} (núcleo: ementa+dispositivo)")
         grupos_so_ia = avisos_ia_por_id.get(s.get("idDecisao"))
         if grupos_so_ia:
             rotulo = ", ".join(f"grupo {n + 1}" for n in grupos_so_ia)
@@ -2347,6 +2478,8 @@ async def _buscar(texto_livre: str | None, numero_acordao: str | None, numero_pr
         )
     if total > pagina * por_pagina:
         linhas.append(f"\nPróxima página: pagina={pagina + 1} (mesmos parâmetros).")
+    if pagina == 1 and total >= 3:
+        linhas.extend(_bloco_panorama(todos))
     return "\n".join(_cortar_bloco(linhas, ORCAMENTO_SAIDA, "resposta da busca"))
 
 
@@ -2565,6 +2698,7 @@ try:
         pagina: int = 1,
         por_pagina: int = 10,
         detalhar: bool = False,
+        ordenar: str = "relevancia",
     ) -> str:
         """Pesquisa jurisprudência do TCE-RO (Tribunal de Contas do Estado de Rondônia) no portal
         oficial ePapyrus (papyrus.tcero.tc.br), sem login.
@@ -2676,6 +2810,19 @@ try:
                 dispositivo, informações adicionais (⚠️ geradas por IA) e link do PDF — o mesmo
                 que obter_acordao_tcero traria, mas embutido na busca. Use com poucos itens por
                 página para não estourar o contexto.
+            ordenar: "relevancia" (PADRÃO desde 22/09/2026) ou "data" (ordem do próprio portal,
+                mais recente primeiro). "relevancia" é offline, no cliente, sobre a resposta já
+                baixada: conta quantos termos DISTINTOS de texto_livre/grupos aparecem em cada
+                decisão — ementa+dispositivo valem 2 pontos por termo, informações adicionais
+                de IA valem 1 — e ordena por essa pontuação, desempatando por data. Virou padrão
+                porque a medição em harness/medicao-2026-09-22.md (gabarito cego de 6 consultas
+                típicas de contas, contra um snapshot de 5.052 decisões) mostrou recall@10 médio
+                subindo de 2% (ordem por data) para 62% (relevância sobre o mesmo texto_livre) e
+                72% (grupos + relevância) — melhora em TODAS as 6 consultas, nenhuma piorou.
+                Sem texto_livre nem grupos não há termo para pontuar — "relevancia" se comporta
+                exatamente como "data" nesse caso. Ementa/dispositivo nunca são alterados; só a
+                ORDEM dos itens muda. Peça ordenar="data" explicitamente se quiser a ordem
+                cronológica pura do portal.
 
         Returns:
             Cabeçalho com o total real e os filtros usados (com `grupos`, os dois números — antes
@@ -2687,7 +2834,7 @@ try:
             quando o próprio portal marca a decisão como cancelada ou vinculada a outra, e (com
             `grupos`) aviso quando um grupo só casou nas informações adicionais.
         """
-        return _finalizar_saida(await _buscar(texto_livre, numero_acordao, numero_processo, relator, orgao_julgador, pagina, por_pagina, detalhar, grupos))
+        return _finalizar_saida(await _buscar(texto_livre, numero_acordao, numero_processo, relator, orgao_julgador, pagina, por_pagina, detalhar, grupos, ordenar))
 
     @mcp.tool()
     async def obter_acordao_tcero(
@@ -3569,6 +3716,50 @@ if __name__ == "__main__":
         else:
             print("pymupdf (fitz) não instalado — pulando medição do item 4 (órgão pelo fecho)")
 
+        # --- item 6 (porte 22/09/2026) — _orgao_do_fecho devolve None com fechos de órgãos
+        # DIFERENTES no mesmo texto (típico de embargos que transcrevem o acórdão embargado).
+        _t_um_pleno = "ACORDAM os Senhores Conselheiros do Pleno do Tribunal de Contas do Estado."
+        _t_um_camara = "ACORDAM os Senhores Conselheiros da 1ª Câmara do Tribunal de Contas do Estado."
+        assert _orgao_do_fecho(_t_um_pleno) == "Pleno"
+        assert _orgao_do_fecho(_t_um_camara) == "1ª Câmara"
+        assert _orgao_do_fecho(_t_um_pleno + " " + _t_um_pleno) == "Pleno", "dois fechos IGUAIS não é conflito"
+        assert _orgao_do_fecho(_t_um_pleno + " " + _t_um_camara) is None, "fechos de órgãos DIFERENTES -> None"
+
+        # --- item 3 (porte 22/09/2026) — ranking por relevância: ordem estável, cópia não muta
+        # o array de entrada, termo só em informações adicionais vale 1 (não 2).
+        _r_a = {"idDecisao": 1, "data": "2026-01-01T00:00:00", "ementa": "multa e reincidência", "acordaoDescricao": "", "informacoesAdicionais": ""}
+        _r_b = {"idDecisao": 2, "data": "2026-02-01T00:00:00", "ementa": "multa", "acordaoDescricao": "", "informacoesAdicionais": ""}
+        _r_c = {"idDecisao": 3, "data": "2026-03-01T00:00:00", "ementa": "nada a ver", "acordaoDescricao": "", "informacoesAdicionais": "reincidência"}
+        _entrada = [{"source": _r_c}, {"source": _r_a}, {"source": _r_b}]
+        _entrada_original = list(_entrada)
+        _termos = _termos_da_consulta("multa reincidência", None)
+        assert set(t.lower() for t in _termos) == {"multa", "reincidência"}
+        _pontos_a, _no_nucleo_a = _pontuar_relevancia(_r_a, _termos)
+        assert _pontos_a == 4 and _no_nucleo_a == 2, (_pontos_a, _no_nucleo_a)  # 2 termos * peso 2
+        _pontos_b, _ = _pontuar_relevancia(_r_b, _termos)
+        assert _pontos_b == 2, _pontos_b  # 1 termo * peso 2
+        _pontos_c, _no_nucleo_c = _pontuar_relevancia(_r_c, _termos)
+        assert _pontos_c == 1 and _no_nucleo_c == 0, (_pontos_c, _no_nucleo_c)  # só em IA: peso 1
+        _ordenado = _ordenar_por_relevancia(_entrada, _termos)
+        assert [x["source"]["idDecisao"] for x in _ordenado] == [1, 2, 3], _ordenado
+        assert _entrada == _entrada_original, "_ordenar_por_relevancia não pode mutar a lista recebida"
+        # sem termos (texto_livre/grupos vazios), a lista sai na mesma ordem de entrada
+        assert _ordenar_por_relevancia(_entrada, []) == _entrada
+
+        # --- item 5 (porte 22/09/2026) — panorama: contagens batem, não aparece com <3 nem fora
+        # da página 1 (essa segunda parte é responsabilidade de _buscar, testada mais abaixo).
+        _resultados_panorama = [
+            {"source": {"orgaoJulgador": "Pleno", "data": "2026-01-01T00:00:00", "sigla": "APL-TC", "natureza": "Definitiva", "relator": "FULANO"}},
+            {"source": {"orgaoJulgador": "Pleno", "data": "2025-05-01T00:00:00", "sigla": "AC1-TC", "natureza": "Definitiva", "relator": "FULANO"}},
+            {"source": {"orgaoJulgador": "1ª Câmara", "data": "2025-01-01T00:00:00", "sigla": "APL-TC", "natureza": None, "relator": "BELTRANO"}},
+        ]
+        _pan = "\n".join(_bloco_panorama(_resultados_panorama))
+        assert "Panorama" in _pan and "3 decisões" in _pan
+        assert "Pleno (2)" in _pan and "1ª Câmara (1)" in _pan
+        assert "2026 (1)" in _pan and "2025 (2)" in _pan
+        assert "sem informação (1)" in _pan  # a natureza None da 3ª decisão
+        assert "FULANO (2)" in _pan and "BELTRANO (1)" in _pan
+
         # --- 4. buscar/obter/verificar com rede mockada (fixtures, sem tocar o portal) ---
         _params_vistos: list[dict] = []
 
@@ -3596,6 +3787,23 @@ if __name__ == "__main__":
             assert "Ementa (integral" in saida_det, saida_det[:300]
             saida_vazia = asyncio.run(_buscar(None, None, None, None, None, 1, 10, False))
             assert "Informe pelo menos um critério" in saida_vazia
+
+            # item 5: panorama aparece na página 1 com >= 3 decisões (4 no fixture de processo),
+            # some na página 2, e some com por_pagina pequeno que corta abaixo de 3 no total real
+            # (aqui o total real é sempre 4 — o teto é sobre o total, não sobre a página).
+            saida_pan_p1 = asyncio.run(_buscar(None, None, "02603/22", None, None, 1, 10, False))
+            assert "Panorama" in saida_pan_p1, saida_pan_p1
+            saida_pan_p2 = asyncio.run(_buscar(None, None, "02603/22", None, None, 2, 2, False))
+            assert "Panorama" not in saida_pan_p2, saida_pan_p2
+
+            # item 3: ordenar="relevancia" muda a ordem sem quebrar a busca; ordenar inválido
+            # recusa ANTES de qualquer chamada de rede (params_vistos não cresce)
+            _n_params_antes = len(_params_vistos)
+            saida_rel = asyncio.run(_buscar("reincidência multa", None, "02603/22", None, None, 1, 10, False, None, "relevancia"))
+            assert "ordenado por relevância" in saida_rel and "termos casados" in saida_rel, saida_rel[:300]
+            saida_ordem_invalida = asyncio.run(_buscar(None, None, "02603/22", None, None, 1, 10, False, None, "xyz"))
+            assert "ordenar inválido" in saida_ordem_invalida and len(_params_vistos) == _n_params_antes + 1, saida_ordem_invalida
+
             saida_od = asyncio.run(_obter_acordao(98114, None, None))
             assert "Ementa (integral" in saida_od and "id 98114" in saida_od, saida_od[:200]
             saida_od_multi = asyncio.run(_obter_acordao(None, "00055/26", None))
@@ -3798,17 +4006,21 @@ if __name__ == "__main__":
 
         globals()["_consultar_api"] = _consultar_c2
         try:
-            saida_grupos = asyncio.run(_buscar(None, None, None, None, None, 1, 5, False, [["reincidência"], ["multa"]]))
+            # ordenar="data" explícito aqui: este bloco testa a explicação histórica da ordem
+            # NATIVA do portal (achado 13/09/2026) e a posição exata de itens no array filtrado
+            # cronológico — com o padrão atual (relevância, ver medição de 22/09/2026) a ordem
+            # seria outra, por desenho.
+            saida_grupos = asyncio.run(_buscar(None, None, None, None, None, 1, 5, False, [["reincidência"], ["multa"]], "data"))
             assert "reincidência" in _params_vistos_grupos[-1]["textoLivre"] and "multa" in _params_vistos_grupos[-1]["textoLivre"], _params_vistos_grupos[-1]
             assert "**1141 decisão(ões)**" in saida_grupos and "(OU nativo)" in saida_grupos, saida_grupos[:300]
             assert "**59** após exigir todos os 2 grupo(s)" in saida_grupos, saida_grupos[:300]
             # idDecisao 96429 está na posição 2 (0-index) do filtrado -> 3º item da página 1
             assert "id 96429" in saida_grupos and "grupo 2 só encontrado em informações adicionais" in saida_grupos, saida_grupos
             # sem grupos, o mesmo fixture não filtra nada (comportamento antigo preservado)
-            saida_sem_grupos = asyncio.run(_buscar("reincidência multa", None, None, None, None, 1, 5, False, None))
+            saida_sem_grupos = asyncio.run(_buscar("reincidência multa", None, None, None, None, 1, 5, False, None, "data"))
             assert "**1141 decisão(ões)**" in saida_sem_grupos and "OU nativo" not in saida_sem_grupos, saida_sem_grupos[:200]
             # grupo que não casa NADA: zero com aviso explicando que havia 1.141 via OU nativo
-            saida_grupo_zero = asyncio.run(_buscar(None, None, None, None, None, 1, 5, False, [["palavraQueNaoExisteEmNenhumaEmentaXYZ123"]]))
+            saida_grupo_zero = asyncio.run(_buscar(None, None, None, None, None, 1, 5, False, [["palavraQueNaoExisteEmNenhumaEmentaXYZ123"]], "data"))
             assert "0** após exigir todos os 1 grupo(s)" in saida_grupo_zero and "1141 decisão(ões) no portal via OU nativo" in saida_grupo_zero, saida_grupo_zero
         finally:
             globals()["_consultar_api"] = _orig_consultar

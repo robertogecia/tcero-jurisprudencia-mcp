@@ -1,0 +1,532 @@
+[
+ {
+  "pergunta": "Há precedente do TCE-RO sobre direcionamento/fraude em licitação?",
+  "termos_advogado": [
+   "direcionamento de licitação",
+   "fraude à licitação"
+  ],
+  "regex_usada_no_gabarito": [
+   "licitacao",
+   "direcionamento"
+  ],
+  "total_no_snapshot": 10,
+  "essencial": [
+   {
+    "idDecisao": 94266,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['licitacao', 'direcionamento'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 89782,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['licitacao', 'direcionamento'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 89022,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['licitacao', 'direcionamento'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 85572,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['licitacao', 'direcionamento'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 79594,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['licitacao', 'direcionamento'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 79111,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['licitacao', 'direcionamento'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 71325,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['licitacao', 'direcionamento'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 68550,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['licitacao', 'direcionamento'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 51366,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['licitacao', 'direcionamento'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 45640,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['licitacao', 'direcionamento'] (regex cega, sem acento/caixa)"
+   }
+  ],
+  "desejavel": []
+ },
+ {
+  "pergunta": "Aposentadoria/ato de pessoal questionando tempo de contribuição — o que o TCE-RO já decidiu?",
+  "termos_advogado": [
+   "aposentadoria",
+   "tempo de contribuição",
+   "registro de ato de pessoal"
+  ],
+  "regex_usada_no_gabarito": [
+   "aposentadoria",
+   "tempo de contribuicao"
+  ],
+  "total_no_snapshot": 1855,
+  "essencial": [
+   {
+    "idDecisao": 98011,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['aposentadoria', 'tempo de contribuicao'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 98010,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['aposentadoria', 'tempo de contribuicao'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 98007,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['aposentadoria', 'tempo de contribuicao'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 98001,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['aposentadoria', 'tempo de contribuicao'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 97995,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['aposentadoria', 'tempo de contribuicao'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 97988,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['aposentadoria', 'tempo de contribuicao'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 97987,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['aposentadoria', 'tempo de contribuicao'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 97986,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['aposentadoria', 'tempo de contribuicao'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 97985,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['aposentadoria', 'tempo de contribuicao'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 97983,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['aposentadoria', 'tempo de contribuicao'] (regex cega, sem acento/caixa)"
+   }
+  ],
+  "desejavel": [
+   {
+    "idDecisao": 97982,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 11 entre 1855)"
+   },
+   {
+    "idDecisao": 97981,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 12 entre 1855)"
+   },
+   {
+    "idDecisao": 97979,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 13 entre 1855)"
+   },
+   {
+    "idDecisao": 97968,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 14 entre 1855)"
+   },
+   {
+    "idDecisao": 97964,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 15 entre 1855)"
+   },
+   {
+    "idDecisao": 97963,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 16 entre 1855)"
+   },
+   {
+    "idDecisao": 97962,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 17 entre 1855)"
+   },
+   {
+    "idDecisao": 97961,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 18 entre 1855)"
+   },
+   {
+    "idDecisao": 97916,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 19 entre 1855)"
+   },
+   {
+    "idDecisao": 97914,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 20 entre 1855)"
+   }
+  ]
+ },
+ {
+  "pergunta": "Reincidência no descumprimento de determinação do Tribunal — como se dosimetra a multa?",
+  "termos_advogado": [
+   "reincidência",
+   "dosimetria da multa",
+   "descumprimento de determinação"
+  ],
+  "regex_usada_no_gabarito": [
+   "reincidencia",
+   "multa"
+  ],
+  "total_no_snapshot": 48,
+  "essencial": [
+   {
+    "idDecisao": 98114,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['reincidencia', 'multa'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 96687,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['reincidencia', 'multa'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 95926,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['reincidencia', 'multa'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 95228,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['reincidencia', 'multa'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 94796,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['reincidencia', 'multa'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 93883,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['reincidencia', 'multa'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 91876,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['reincidencia', 'multa'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 91223,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['reincidencia', 'multa'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 89831,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['reincidencia', 'multa'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 89425,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['reincidencia', 'multa'] (regex cega, sem acento/caixa)"
+   }
+  ],
+  "desejavel": [
+   {
+    "idDecisao": 89405,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 11 entre 48)"
+   },
+   {
+    "idDecisao": 88264,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 12 entre 48)"
+   },
+   {
+    "idDecisao": 87470,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 13 entre 48)"
+   },
+   {
+    "idDecisao": 86846,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 14 entre 48)"
+   },
+   {
+    "idDecisao": 86646,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 15 entre 48)"
+   },
+   {
+    "idDecisao": 85571,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 16 entre 48)"
+   },
+   {
+    "idDecisao": 85405,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 17 entre 48)"
+   },
+   {
+    "idDecisao": 85109,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 18 entre 48)"
+   },
+   {
+    "idDecisao": 84690,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 19 entre 48)"
+   },
+   {
+    "idDecisao": 84681,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 20 entre 48)"
+   }
+  ]
+ },
+ {
+  "pergunta": "Dano ao erário com imputação de débito solidário entre gestores — precedentes?",
+  "termos_advogado": [
+   "dano ao erário",
+   "débito solidário",
+   "responsabilidade solidária"
+  ],
+  "regex_usada_no_gabarito": [
+   "debito",
+   "solidari"
+  ],
+  "total_no_snapshot": 47,
+  "essencial": [
+   {
+    "idDecisao": 96230,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['debito', 'solidari'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 94757,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['debito', 'solidari'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 94373,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['debito', 'solidari'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 91398,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['debito', 'solidari'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 89818,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['debito', 'solidari'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 89817,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['debito', 'solidari'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 85713,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['debito', 'solidari'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 82950,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['debito', 'solidari'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 79836,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['debito', 'solidari'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 79167,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['debito', 'solidari'] (regex cega, sem acento/caixa)"
+   }
+  ],
+  "desejavel": [
+   {
+    "idDecisao": 77404,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 11 entre 47)"
+   },
+   {
+    "idDecisao": 76446,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 12 entre 47)"
+   },
+   {
+    "idDecisao": 75445,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 13 entre 47)"
+   },
+   {
+    "idDecisao": 75214,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 14 entre 47)"
+   },
+   {
+    "idDecisao": 74876,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 15 entre 47)"
+   },
+   {
+    "idDecisao": 74875,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 16 entre 47)"
+   },
+   {
+    "idDecisao": 74104,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 17 entre 47)"
+   },
+   {
+    "idDecisao": 73361,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 18 entre 47)"
+   },
+   {
+    "idDecisao": 70618,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 19 entre 47)"
+   },
+   {
+    "idDecisao": 70016,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 20 entre 47)"
+   }
+  ]
+ },
+ {
+  "pergunta": "Contratação temporária de servidor sem concurso público — o TCE-RO já se pronunciou?",
+  "termos_advogado": [
+   "contratação temporária",
+   "ausência de concurso público"
+  ],
+  "regex_usada_no_gabarito": [
+   "temporaria",
+   "servidor"
+  ],
+  "total_no_snapshot": 29,
+  "essencial": [
+   {
+    "idDecisao": 97077,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['temporaria', 'servidor'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 96796,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['temporaria', 'servidor'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 96526,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['temporaria', 'servidor'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 96134,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['temporaria', 'servidor'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 95390,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['temporaria', 'servidor'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 94977,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['temporaria', 'servidor'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 94899,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['temporaria', 'servidor'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 94202,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['temporaria', 'servidor'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 92746,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['temporaria', 'servidor'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 91132,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['temporaria', 'servidor'] (regex cega, sem acento/caixa)"
+   }
+  ],
+  "desejavel": [
+   {
+    "idDecisao": 90067,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 11 entre 29)"
+   },
+   {
+    "idDecisao": 89881,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 12 entre 29)"
+   },
+   {
+    "idDecisao": 89773,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 13 entre 29)"
+   },
+   {
+    "idDecisao": 89720,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 14 entre 29)"
+   },
+   {
+    "idDecisao": 89649,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 15 entre 29)"
+   },
+   {
+    "idDecisao": 89619,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 16 entre 29)"
+   },
+   {
+    "idDecisao": 89617,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 17 entre 29)"
+   },
+   {
+    "idDecisao": 89616,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 18 entre 29)"
+   },
+   {
+    "idDecisao": 89581,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 19 entre 29)"
+   },
+   {
+    "idDecisao": 89564,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 20 entre 29)"
+   }
+  ]
+ },
+ {
+  "pergunta": "Obra pública paralisada/em atraso — há precedente de responsabilização?",
+  "termos_advogado": [
+   "obra paralisada",
+   "atraso de obra pública"
+  ],
+  "regex_usada_no_gabarito": [
+   "obra",
+   "atraso"
+  ],
+  "total_no_snapshot": 18,
+  "essencial": [
+   {
+    "idDecisao": 85983,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['obra', 'atraso'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 85405,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['obra', 'atraso'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 81871,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['obra', 'atraso'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 79410,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['obra', 'atraso'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 79408,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['obra', 'atraso'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 77275,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['obra', 'atraso'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 73841,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['obra', 'atraso'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 73696,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['obra', 'atraso'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 73372,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['obra', 'atraso'] (regex cega, sem acento/caixa)"
+   },
+   {
+    "idDecisao": 71713,
+    "justificativa": "núcleo (ementa+dispositivo) contém todos os termos ['obra', 'atraso'] (regex cega, sem acento/caixa)"
+   }
+  ],
+  "desejavel": [
+   {
+    "idDecisao": 68344,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 11 entre 18)"
+   },
+   {
+    "idDecisao": 67895,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 12 entre 18)"
+   },
+   {
+    "idDecisao": 66551,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 13 entre 18)"
+   },
+   {
+    "idDecisao": 63637,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 14 entre 18)"
+   },
+   {
+    "idDecisao": 59983,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 15 entre 18)"
+   },
+   {
+    "idDecisao": 59023,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 16 entre 18)"
+   },
+   {
+    "idDecisao": 58150,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 17 entre 18)"
+   },
+   {
+    "idDecisao": 48323,
+    "justificativa": "casa a mesma regex, mas fora do corte de recência do essencial (posição 18 entre 18)"
+   }
+  ]
+ }
+]
