@@ -87,12 +87,30 @@ async def _rodar_uma(texto_livre, grupos, ordenar, usar_grupos):
         texto_livre, None, None, None, None, 1, 25, False,
         grupos if usar_grupos else None, ordenar,
     )
-    ids = [int(m) for m in re.findall(r"^\d+\. .*?\bid (\d+)\b", saida, re.M)]
-    if not ids:
-        # fallback: o formato de _resumo_item usa "id <n>" em algum ponto da linha do item —
-        # recupera todos os "id N" da saída, na ordem em que aparecem (ordem = ordenação real).
-        ids = [int(m) for m in re.findall(r"\bid (\d+)\b", saida)]
+    # Red team 22/09/2026-b, achado 1b: o regex antigo (`^\d+\. `) nunca casava o cabeçalho real
+    # do item (`**N. SIGLA NUM** · id X`) e o fallback pegava TODO "id N" da saída — inclusive
+    # ids citados em ementa/decisão vinculada (até 36 ids para 25 itens). Agora: só o cabeçalho.
+    ids = [int(m) for m in _RE_ITEM_CABECALHO.findall(saida)]
     return ids, saida
+
+
+_RE_ITEM_CABECALHO = re.compile(r"^\*\*\d+\. [^\n]*?\*\* · id (\d+)", re.M)
+
+
+async def _ids_conjunto_inteiro(texto_livre, grupos, ordenar):
+    """Recall no CONJUNTO INTEIRO (sem corte de página): mesmo pipeline de _buscar com as funções
+    reais do servidor (OU nativo mockado -> _filtrar_por_grupos -> _ordenar_por_relevancia). O
+    rótulo antigo "recall total" era o top-25 (por_pagina=25) — achado 1b do red team 22b."""
+    g = srv._grupos_validos(grupos)
+    dados = await _consultar_fake({"textoLivre": srv._montar_texto_livre_com_grupos(texto_livre, g)}, "busca")
+    todos = dados["result"]
+    if g:
+        todos, _ = srv._filtrar_por_grupos(todos, g)
+    return [it["source"]["idDecisao"] for it in todos]
+
+
+_ANOTACAO = os.path.join(RAIZ, "references", "red-team-2026-09-22b", "anotacao.json")
+ANOTACAO = json.load(open(_ANOTACAO, encoding="utf-8")) if os.path.exists(_ANOTACAO) else {}
 
 
 async def main():
@@ -105,10 +123,12 @@ async def main():
         "mockado para servir do snapshot (sem rede); `_buscar` e toda a formatação/ordenação "
         "são código real do servidor.\n"
     )
-    linhas_md.append("| # | consulta | forma | recall@10 | recall@25 | recall total | perdidos essenciais |")
-    linhas_md.append("|---|---|---|---|---|---|---|")
+    linhas_md.append("| # | consulta | forma | recall@10 (gold regex) | recall@25 | recall no conjunto inteiro | P@10 cega (anotação 22b) | perdidos no top-25 |")
+    linhas_md.append("|---|---|---|---|---|---|---|---|")
 
     somatorio = {"a": [], "b": [], "c": []}
+    precisao = {"a": [], "b": [], "c": []}
+    nao_anotados = 0
 
     for i, (gold_item, consulta) in enumerate(zip(GOLD, CONSULTAS_BUSCA), start=1):
         essenciais = [e["idDecisao"] for e in gold_item["essencial"]]
@@ -121,13 +141,17 @@ async def main():
             ids, saida_bruta = await _rodar_uma(tl, grupos, ordenar, usar_grupos=grupos is not None)
             achou10, tot, r10 = _recall(ids, essenciais, teto=10)
             achou25, _, r25 = _recall(ids, essenciais, teto=25)
-            achou_tot, _, r_tot = _recall(ids, essenciais, teto=None)
+            conjunto = await _ids_conjunto_inteiro(tl, grupos, ordenar)
+            achou_tot, _, r_tot = _recall(conjunto, essenciais, teto=None)
             perdidos = [idd for idd in essenciais if idd not in ids]
             somatorio[chave].append(r10)
+            rel = set((ANOTACAO.get(str(i)) or {}).get("relevantes") or [])
+            p10 = len(rel & set(ids[:10])) / 10 if rel else float("nan")
+            precisao[chave].append(p10)
             linhas_md.append(
                 f"| {i} | {gold_item['pergunta'][:40]}... | ({chave}) | "
                 f"{achou10}/{tot} ({r10:.0%}) | {achou25}/{tot} ({r25:.0%}) | "
-                f"{achou_tot}/{tot} ({r_tot:.0%}) | {len(perdidos)} |"
+                f"{achou_tot}/{tot} ({r_tot:.0%}) de {len(conjunto)} | {p10:.0%} | {len(perdidos)} |"
             )
             resultado_bruto.append({
                 "consulta_idx": i, "pergunta": gold_item["pergunta"], "forma": chave,
@@ -142,7 +166,8 @@ async def main():
     linhas_md.append("## Recall@10 médio por forma\n")
     for chave, nome in [("a", "(a) texto_livre, ordenar=data"), ("b", "(b) texto_livre, ordenar=relevancia"), ("c", "(c) grupos, ordenar=relevancia")]:
         media = sum(somatorio[chave]) / len(somatorio[chave])
-        linhas_md.append(f"- {nome}: **{media:.0%}**")
+        mp = sum(precisao[chave]) / len(precisao[chave])
+        linhas_md.append(f"- {nome}: recall@10 gold regex **{media:.0%}** · P@10 cega **{mp:.0%}**")
 
     # decisão
     media_a = sum(somatorio["a"]) / len(somatorio["a"])
@@ -176,6 +201,24 @@ async def main():
         )
         decisao = "data"
 
+    mp = {k: sum(v) / len(v) for k, v in precisao.items()}
+    linhas_md.append("\n## Circularidade do gabarito (red team 22/09/2026-b)\n")
+    linhas_md.append(
+        "O gold regex é circular com o ranking: ambos olham os MESMOS campos (ementa+dispositivo) "
+        "e quase as mesmas palavras, e o `essencial` é \"os 10 mais recentes que casam a regex\" — "
+        "exatamente o desempate por data do ranking. Por isso o recall@10 do gold regex serve para "
+        "comparar (a) com (b), mas NÃO mede se o topo responde à pergunta. Medida independente: "
+        "pool cego (top-10 de a/b/c embaralhado, sem rótulo de forma), anotado lendo a ementa "
+        "contra a PERGUNTA (`references/red-team-2026-09-22b/anotacao.json`, um anotador). "
+        f"P@10 cega média: (a) {mp['a']:.0%}, (b) {mp['b']:.0%}, (c) {mp['c']:.0%}. "
+        "A decisão `relevancia` como padrão SE SUSTENTA na medida independente (a→b), mas: "
+        "(1) o gold regex superestima a consulta 3 (recall 100%, só 40% de fato pertinente) e "
+        "subestima a 5 (recall 0%, 50% pertinente — o gold da 5 é quase todo pensão \"temporária\", "
+        "falso positivo da regex `temporaria`+`servidor`); (2) `grupos` NÃO é melhor que texto_livre "
+        "na medida cega (68% vs 70%) — o ganho de (c) no gold regex é artefato; (3) o \"recall "
+        "total\" antigo era o top-25 e o parser contava ids citados dentro de ementas (a linha 4c "
+        "era 3/10 e é 5/10)."
+    )
     with open(os.path.join(BASE, "medicao-2026-09-22.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(linhas_md) + "\n")
     with open(os.path.join(BASE, "_resultado_bruto.json"), "w", encoding="utf-8") as f:

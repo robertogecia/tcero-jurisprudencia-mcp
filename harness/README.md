@@ -43,12 +43,24 @@ para medir offline, medição reprodutível comparando estratégias de busca.
 
 ## Resultado da medição (resumo — ver `medicao-2026-09-22.md` para a tabela completa)
 
-Recall@10 médio: **(a) data = 2%**, **(b) texto_livre+relevância = 62%**, **(c)
-grupos+relevância = 72%**. Relevância melhorou recall@10 nas 6 consultas, sem piorar nenhuma —
-por isso `ordenar="relevancia"` virou o padrão de `buscar_jurisprudencia_tcero` (era `"data"`).
+Recall@10 médio contra o gold regex: **(a) data = 2%**, **(b) texto_livre+relevância = 62%**,
+**(c) grupos+relevância = 75%** (era 72% antes do red team 22/09/2026-b corrigir o parser do
+`medir.py`, que contava ids citados dentro de ementas). Relevância melhorou recall@10 nas 6
+consultas, sem piorar nenhuma — por isso `ordenar="relevancia"` virou o padrão de
+`buscar_jurisprudencia_tcero` (era `"data"`).
+
+**Leitura corrigida (red team 22/09/2026-b):** o gold regex é circular com o ranking (mesmos
+campos, quase as mesmas palavras, mesmo desempate por data), então ele só serve para comparar
+(a) com (b). A medida independente — pool cego top-10 de a/b/c anotado contra a PERGUNTA
+(`references/red-team-2026-09-22b/anotacao.json`) — dá P@10 **(a) 3%, (b) 70%, (c) 68%**: o
+padrão `relevancia` se sustenta; a vantagem de `grupos` sobre texto_livre, não. A coluna antiga
+"recall total" era o top-25; agora é o conjunto inteiro (100% em a/b por construção — a ordem
+não muda o conjunto).
 
 ## Limitações conhecidas
 
+- O gold da consulta 5 é quase todo pensão por morte "temporária" (falso positivo da regex
+  `temporaria`+`servidor`) — não é contratação temporária; ver a coluna P@10 cega.
 - Gabarito de **um revisor só** (sem segunda leitura cega), mesma ressalva do harness do TJSE.
 - `essencial`/`desejavel` são cortados só pela data mais recente entre os que casam a regex —
   não há juízo humano de qual É de fato mais relevante entre os que casam; isso pediria leitura
