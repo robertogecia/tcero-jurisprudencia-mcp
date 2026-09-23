@@ -296,6 +296,42 @@ TCE-RO (o TJRO só revelou o problema em N=24). A função existe, é testada no
 **não está ligada** a nenhuma citação ou verificação: ligar o fecho como fonte da citação (em
 vez do cadastro) é decisão da conversa principal, depois de uma amostra maior.
 
+`_orgao_do_fecho` agora também devolve `None` quando o PDF tem fechos de órgãos **diferentes**
+no mesmo texto — típico de acórdão de embargos/recurso que transcreve o fecho do acórdão
+embargado (dois fechos IGUAIS não é conflito). Regressão coberta no `--selftest` (com os 4 PDFs
+de `fixtures/pdf/`). Amostra ampliada em 22/09/2026 com 14 PDFs adicionais reais (baixados para
+`harness/_pdfs/`, fora do git), distribuídos entre 1ª Câmara, 2ª Câmara, Pleno e siglas normais
++ embargos/recurso (AC1R-TC/AC2R-TC/APLR-TC) — tabela completa em
+`harness/fecho-2026-09-22.md`: **18/18 bateram, 0 divergências**. Com N=18 e zero divergências,
+o aviso de divergência em `obter_acordao_tcero(..., ler_inteiro_teor=True)` **continua
+desligado** — não há caso real para ele apontar ainda.
+
+## Ordenar por relevância — `ordenar` (22/09/2026)
+
+`buscar_jurisprudencia_tcero(..., ordenar=...)` reordena a página, no cliente, sobre a
+resposta já baixada: conta quantos termos DISTINTOS de `texto_livre`/`grupos` aparecem em cada
+decisão (ementa+dispositivo pesam 2 por termo, informações adicionais de IA pesam 1) e ordena
+por essa pontuação, desempatando por data. Não muda ementa/dispositivo, só a ordem.
+
+**`"relevancia"` é o PADRÃO desde 22/09/2026** (era `"data"` antes). Decisão baseada em medição
+real: `harness/medir.py` rodou o `_buscar` de verdade (com a API mockada a partir de um
+snapshot local de 5.052 decisões, sem rede) contra um gabarito cego de 6 consultas típicas de
+contas (`harness/gold.json`) em três formas — (a) texto_livre + ordenar=data (o de sempre),
+(b) o mesmo texto_livre + ordenar=relevancia, (c) grupos de sinônimos + ordenar=relevancia.
+Resultado (`harness/medicao-2026-09-22.md`): recall@10 médio **2% (a) → 62% (b) → 72% (c)**,
+melhora em TODAS as 6 consultas, nenhuma piorou. Sem `texto_livre` nem `grupos` não há termo
+para pontuar — `"relevancia"` se comporta como `"data"` nesse caso, então o novo padrão não
+muda nada em buscas só por número/relator/órgão. Peça `ordenar="data"` explicitamente para a
+ordem cronológica pura do portal. Cada item, com `ordenar="relevancia"`, mostra
+`termos casados: N/M`.
+
+## Panorama (facetas offline)
+
+Buscas com 3+ decisões na página 1 ganham, ao final da resposta, um bloco "Panorama" com
+contagem por órgão julgador, ano, sigla, natureza e os 5 relatores mais frequentes — só um
+indício para escolher o que ler, nunca conclusão sobre a tese. Não aparece com menos de 3
+decisões nem fora da página 1. Campo ausente conta como "sem informação".
+
 ## Como pesquisar bem
 
 Informe pelo menos um critério (`texto_livre`, `numero_acordao`, `numero_processo`, `relator`

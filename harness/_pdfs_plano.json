@@ -1,0 +1,100 @@
+[
+ {
+  "idDecisao": 98036,
+  "sigla": "AC1-TC",
+  "orgaoJulgador": "1ª Câmara",
+  "linkArquivo": "//tce.ro.gov.br/AbrirPdfConvidado/8754dc10377a872b7e143475cfa501e4",
+  "numero": "00395/26"
+ },
+ {
+  "idDecisao": 98030,
+  "sigla": "AC1-TC",
+  "orgaoJulgador": "1ª Câmara",
+  "linkArquivo": "//tce.ro.gov.br/AbrirPdfConvidado/84884216307eca84650032c87c21272f",
+  "numero": "00389/26"
+ },
+ {
+  "idDecisao": 98029,
+  "sigla": "AC1-TC",
+  "orgaoJulgador": "1ª Câmara",
+  "linkArquivo": "//tce.ro.gov.br/AbrirPdfConvidado/b28b3619e8050dae980db30ed1bd703d",
+  "numero": "00388/26"
+ },
+ {
+  "idDecisao": 98122,
+  "sigla": "AC2-TC",
+  "orgaoJulgador": "2ª Câmara",
+  "linkArquivo": "//tce.ro.gov.br/AbrirPdfConvidado/1ec63e7fa55f4ff86f6c00a93aceefec",
+  "numero": "00331/26"
+ },
+ {
+  "idDecisao": 98021,
+  "sigla": "AC2-TC",
+  "orgaoJulgador": "2ª Câmara",
+  "linkArquivo": "//tce.ro.gov.br/AbrirPdfConvidado/b0a0e9cc6ac1922e2421ca6064d279d1",
+  "numero": "00330/26"
+ },
+ {
+  "idDecisao": 97997,
+  "sigla": "AC2-TC",
+  "orgaoJulgador": "2ª Câmara",
+  "linkArquivo": "//tce.ro.gov.br/AbrirPdfConvidado/5409273083caff013ca731f3504cb2a6",
+  "numero": "00329/26"
+ },
+ {
+  "idDecisao": 98124,
+  "sigla": "APL-TC",
+  "orgaoJulgador": "Pleno",
+  "linkArquivo": "//tce.ro.gov.br/AbrirPdfConvidado/38ad24797da5e6bbd2d3539f25b3b07a",
+  "numero": "00056/26"
+ },
+ {
+  "idDecisao": 97253,
+  "sigla": "APL-TC",
+  "orgaoJulgador": "Pleno",
+  "linkArquivo": "//tce.ro.gov.br/AbrirPdfConvidado/a08494ee9170ee9b4a08db9fe93f9448",
+  "numero": "00048/26"
+ },
+ {
+  "idDecisao": 97316,
+  "sigla": "APL-TC",
+  "orgaoJulgador": "Pleno",
+  "linkArquivo": "//tce.ro.gov.br/AbrirPdfConvidado/2699755358fece109430c464ed1faf76",
+  "numero": "00049/26"
+ },
+ {
+  "idDecisao": 92056,
+  "sigla": "AC1R-TC",
+  "orgaoJulgador": "1ª Câmara",
+  "linkArquivo": "//tce.ro.gov.br/AbrirPdfConvidado/4a464d531a65d7ca52a9f2ad367080f5",
+  "numero": "00258/25"
+ },
+ {
+  "idDecisao": 91969,
+  "sigla": "AC1R-TC",
+  "orgaoJulgador": "1ª Câmara",
+  "linkArquivo": "//tce.ro.gov.br/AbrirPdfConvidado/0963daaf876496bcbc81409c47aa1cd5",
+  "numero": "00205/25"
+ },
+ {
+  "idDecisao": 97242,
+  "sigla": "AC2R-TC",
+  "orgaoJulgador": "2ª Câmara",
+  "linkArquivo": "//tce.ro.gov.br/AbrirPdfConvidado/c98f1b9b8390db48262f29bb375616e5",
+  "numero": "00009/26"
+ },
+ {
+  "idDecisao": 97238,
+  "sigla": "AC2R-TC",
+  "orgaoJulgador": "2ª Câmara",
+  "linkArquivo": "//tce.ro.gov.br/AbrirPdfConvidado/cc73899eaa5a7ccc09ba0290a5635001",
+  "numero": "00865/25"
+ },
+ {
+  "idDecisao": 84026,
+  "sigla": "APLR-TC",
+  "orgaoJulgador": "Pleno",
+  "linkArquivo": "//tce.ro.gov.br/AbrirPdfConvidado/fecd98e645d0b1a4a080b0ecb0f9430b",
+  "numero": "00163/23"
+ }
+]

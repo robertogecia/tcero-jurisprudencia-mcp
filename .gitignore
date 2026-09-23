@@ -5,3 +5,6 @@ __pycache__/
 .disjuntor_estado_tcero.json.lock
 *.tmp
 .DS_Store
+harness/_snapshot/
+harness/_pdfs/
+harness/_log_rede.json
