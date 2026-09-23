@@ -29,6 +29,15 @@
   `harness/fecho-2026-09-22.md`, `harness/_log_rede.json` (30/30 requisições do orçamento da
   tarefa, todas bem-sucedidas).
 
+- Red team (b) do mesmo dia (`references/red-team-2026-09-22b.md`): o gabarito regex é circular
+  (olha os mesmos campos que o ranking); em anotação cega de 130 itens o top-10 pertinente foi
+  3 % (data) × 70 % (relevância) × 68 % (grupos+relevância) — o padrão `relevancia` se sustenta,
+  `grupos` NÃO ordena melhor que `texto_livre`. Corrigidos: `"frase exata"` vira um termo,
+  palavras vazias não pontuam, panorama tolera campo em lista e conta relator uma vez,
+  `_orgao_do_fecho` reconhece "Tribunal Pleno"/"Primeira Câmara". Fecho × cadastro: 18/18.
+- Pacote `.mcpb` (porte Node, `~/MCP/tcero-jurisprudencia-mcpb`): mesmas 4 ferramentas, 38 testes,
+  paridade Node × Python 9/12 byte a byte (as 3 diferenças são só espaçamento da extração de PDF).
+
 ## 1.1.0 e anteriores
 
 Ver histórico de commits e `references/` — changelog formal só começou neste porte.

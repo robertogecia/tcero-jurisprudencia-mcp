@@ -380,11 +380,19 @@ Este é um **servidor MCP em Python**. Funciona em qualquer cliente que fale MCP
 | Cliente | Funciona? |
 |---|---|
 | **Claude Code** (terminal, desktop app, extensão do VS Code/JetBrains) | Sim — é onde o autor usa todo dia |
-| **Claude Desktop** (programa instalado no Mac/Windows) | Sim, registrando o servidor no `claude_desktop_config.json` (abaixo). Ainda **não** há instalador de um clique (`.mcpb`) — é um item futuro |
+| **Claude Desktop** (programa instalado no Mac/Windows) | Sim, de duas formas: **instalador de um clique** `Jurisprudencia-TCERO.mcpb` (porte em Node, mesmas 4 ferramentas e mesmas saídas — baixe na [página de releases](https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest), arraste em Configurações → Extensões); ou registrando este servidor Python no `claude_desktop_config.json` (abaixo) |
 | Claude pelo **site** (claude.ai no navegador) ou pelo **celular** | **Não.** Precisa ser um programa instalado no computador, que consiga rodar Python |
 | Outros clientes MCP (Cursor, Windsurf, Cline…) | Em tese sim (`stdio`), mas não foi testado pelo autor |
 
-## Instalar (uns 5 minutos)
+## Instalar no Claude Desktop com um clique (.mcpb)
+
+1. Baixe `Jurisprudencia-TCERO.mcpb` na [última release](https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest) (cerca de 21 MB — leva dentro o leitor de PDF).
+2. No Claude Desktop: Configurações → Extensões → arraste o arquivo (ou "Instalar extensão…").
+3. Abra uma conversa nova e peça uma busca no TCE-RO.
+
+O pacote é um porte em Node do servidor Python deste repositório (fonte de verdade: mudança de comportamento entra primeiro aqui, com red team, depois no pacote, com o teste de paridade). Diferenças conhecidas: a extração de texto do PDF (pdfjs-dist × PyMuPDF) não é byte-idêntica no espaçamento — o casamento de citações e o recibo funcionam igual, mas um recibo gravado pelo pacote não tem o mesmo hash de um gravado pelo Python para o mesmo acórdão; e o diagnóstico de ritmo mostra horas em UTC. Precisa de Node? Não: o Claude Desktop traz o runtime.
+
+## Instalar o servidor Python (uns 5 minutos)
 
 Você precisa de **Python 3.11 ou mais novo** e de **git**. No Mac, os dois já vêm ou se instalam com as ferramentas de linha de comando da Apple; no Windows, instale o Python em [python.org](https://www.python.org/downloads/) (marque "Add to PATH").
 
