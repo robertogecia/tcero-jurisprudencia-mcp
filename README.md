@@ -1,12 +1,13 @@
 # MCP — Jurisprudência do TCE-RO (portal ePapyrus)
 
-Servidor MCP pessoal que pesquisa a jurisprudência do **TCE-RO** (Tribunal de Contas do Estado
-de Rondônia) no portal oficial ePapyrus (`https://papyrus.tcero.tc.br/`), sem login. Irmão do
-`~/MCP/tjro-jurisprudencia` e do `~/MCP/trf1-jurisprudencia` — mesma disciplina (disjuntor
+Servidor MCP que pesquisa a jurisprudência do **TCE-RO** (Tribunal de Contas do Estado
+de Rondônia) no portal oficial ePapyrus (`https://papyrus.tcero.tc.br/`), sem login. Irmão dos
+servidores do [TJRO](https://github.com/robertogecia/tjro-jurisprudencia-mcp) e do
+[TRF1](https://github.com/robertogecia/trf1-jurisprudencia-mcp) — mesma disciplina (disjuntor
 compartilhado entre processos, citação pronta, paginação segura), API bem mais simples: JSON
 puro, sem WAF, sem sessão, sem ViewState.
 
-Criado em 13/09/2026. Contrato completo da API (achados ao vivo, inclusive o que diverge do
+Criado em 13/09/2026; versão atual na primeira linha do `diagnostico_ritmo_tcero`. **Instalação: seção "Instalar" abaixo.** Contrato completo da API (achados ao vivo, inclusive o que diverge do
 que se supunha antes de testar) em `references/protocolo-papyrus.md`; respostas cruas reais em
 `fixtures/`.
 
@@ -336,28 +337,119 @@ frase, termo de uma palavra casa por substring com fronteira de palavra à ESQUE
 um grupo foi nas informações adicionais (texto de apoio gerado com IA pelo DEJUR, não o texto
 do acórdão), a ferramenta avisa isso por decisão.
 
-## Instalação (pessoal)
+## Onde funciona
+
+Este é um **servidor MCP em Python**. Funciona em qualquer cliente que fale MCP por `stdio`:
+
+| Cliente | Funciona? |
+|---|---|
+| **Claude Code** (terminal, desktop app, extensão do VS Code/JetBrains) | Sim — é onde o autor usa todo dia |
+| **Claude Desktop** (programa instalado no Mac/Windows) | Sim, registrando o servidor no `claude_desktop_config.json` (abaixo). Ainda **não** há instalador de um clique (`.mcpb`) — é um item futuro |
+| Claude pelo **site** (claude.ai no navegador) ou pelo **celular** | **Não.** Precisa ser um programa instalado no computador, que consiga rodar Python |
+| Outros clientes MCP (Cursor, Windsurf, Cline…) | Em tese sim (`stdio`), mas não foi testado pelo autor |
+
+## Instalar (uns 5 minutos)
+
+Você precisa de **Python 3.11 ou mais novo** e de **git**. No Mac, os dois já vêm ou se instalam com as ferramentas de linha de comando da Apple; no Windows, instale o Python em [python.org](https://www.python.org/downloads/) (marque "Add to PATH").
+
+### Passo 1 — Baixe o código
 
 ```bash
-cd ~/MCP/tcero-jurisprudencia
-python3 -m venv .venv && .venv/bin/pip install "mcp[cli]>=1.4.0,<2" "httpx>=0.27" "truststore>=0.9" "pymupdf>=1.24"
-# mcp<2 de propósito: o 2.x renomeou FastMCP → MCPServer (o registro das tools falha em silêncio)
-# pymupdf (fitz): extração de texto do inteiro teor em PDF, ver obter_acordao_tcero(ler_inteiro_teor=true)
-.venv/bin/python servidor_tcero.py --selftest            # offline, contra os fixtures
-.venv/bin/python servidor_tcero.py --selftest --online   # + operações reais (poucas, moderado)
+git clone https://github.com/robertogecia/tcero-jurisprudencia-mcp.git
+cd tcero-jurisprudencia-mcp
 ```
 
-### Registro em `~/.claude.json`
+### Passo 2 — Crie o ambiente e instale as dependências
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install "mcp[cli]>=1.4.0,<2" "httpx>=0.27" "truststore>=0.9" pymupdf
+```
+
+(No Windows: `.venv\Scripts\pip` no lugar de `.venv/bin/pip`, e `.venv\Scripts\python` no lugar de `.venv/bin/python`, aqui e nos passos seguintes.)
+
+`mcp<2` é de propósito: a versão 2.x renomeou `FastMCP` e o registro das ferramentas falha em silêncio. `pymupdf` é o que lê o PDF do inteiro teor.
+
+### Passo 3 — Confira que está tudo certo, sem tocar no portal
+
+```bash
+TCERO_MCP_SEM_AVISO_ATUALIZACAO=1 .venv/bin/python servidor_tcero.py --selftest
+```
+
+Deve terminar com `selftest offline OK`. Esse teste roda contra respostas reais gravadas no repositório e **não faz nenhuma requisição** ao TCE-RO.
+
+### Passo 4 — Registre no seu cliente
+
+**Claude Code** (troque o caminho pelo da pasta onde você clonou):
+
+```bash
+claude mcp add tcero_jurisprudencia -- /caminho/para/tcero-jurisprudencia-mcp/.venv/bin/python /caminho/para/tcero-jurisprudencia-mcp/servidor_tcero.py
+```
+
+**Claude Desktop**: abra Configurações → Desenvolvedor → Editar configuração (é o arquivo `claude_desktop_config.json`) e acrescente, dentro de `"mcpServers"`:
 
 ```json
 "tcero_jurisprudencia": {
-  "command": "/Users/robertogrecia/MCP/tcero-jurisprudencia/.venv/bin/python",
-  "args": ["/Users/robertogrecia/MCP/tcero-jurisprudencia/servidor_tcero.py"],
+  "command": "/caminho/para/tcero-jurisprudencia-mcp/.venv/bin/python",
+  "args": ["/caminho/para/tcero-jurisprudencia-mcp/servidor_tcero.py"],
   "env": {}
 }
 ```
 
-O processo MCP só carrega código novo depois de reiniciar o Claude.
+### Passo 5 — Abra uma conversa nova e teste
+
+Conversa antiga não percebe o servidor novo. Numa conversa nova, peça algo como *"pesquise no TCE-RO acórdãos sobre dispensa de licitação por emergência"* — o Claude deve chamar `buscar_jurisprudencia_tcero`. Se quiser ver que o servidor está de pé sem gastar nenhuma consulta, peça o `diagnostico_ritmo_tcero`: a primeira linha traz a versão instalada.
+
+## Algo deu errado? Veja aqui antes de pedir ajuda
+
+| O que aconteceu | O que fazer |
+|---|---|
+| `pip install` reclama de versão do Python | Precisa de Python 3.11+. `python3 --version` mostra a sua. |
+| Instalei, mas o Claude diz que **não tem essa ferramenta** | Abra uma **conversa nova**. No Claude Code, `claude mcp list` mostra se o servidor está registrado e conectando; no Claude Desktop, confira se o JSON ficou válido (uma vírgula a mais derruba a configuração inteira). |
+| O servidor registra mas as ferramentas não aparecem | Quase sempre é `mcp` 2.x instalado por engano. Rode o Passo 2 de novo, com o `<2`. |
+| A busca devolve **zero** com filtro de relator ou de órgão | O portal exige o valor **exato** e devolve vazio sem erro. A ferramenta avisa quando não reconheceu o filtro: corrija a grafia (a mensagem lista os valores aceitos) antes de concluir que não há jurisprudência. |
+| A busca devolve centenas de resultados fora do assunto | O portal só sabe fazer OU entre palavras e ordena por data. Use `grupos` (E entre conceitos) — veja "Como pesquisar bem". |
+| `ler_inteiro_teor=true` diz que o PDF **não tem texto extraível** | O acórdão foi digitalizado como imagem. A ferramenta não faz OCR de propósito: abra o link do PDF no navegador. |
+| Erro de rede repetido | Confira se o portal abre no navegador ([papyrus.tcero.tc.br](https://papyrus.tcero.tc.br/)). Se abre e a ferramenta não, veja "Se a busca parar de funcionar". |
+| Nenhuma linha acima resolveu | [Abra uma issue](../../issues) descrevendo o que aconteceu — a própria mensagem de erro traz um link com o formulário já preenchido com os dados técnicos (versão, sistema, tipo do erro). |
+
+## Se a busca parar de funcionar
+
+O portal do TCE-RO **não tem WAF, captcha nem login** (confirmado em todos os testes até a data deste README), então bloqueio por "verificação de navegador", como acontece no TJRO, nunca foi visto aqui. O que pode acontecer:
+
+- **O portal mudou.** O ePapyrus é uma aplicação do tribunal e pode trocar a API sem aviso. Nesse caso a ferramenta passa a devolver erro em toda busca, mesmo com o portal abrindo normalmente no navegador. Veja se há [versão mais nova](https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest) — a própria mensagem de erro avisa quando há — e, se não houver, [relate](../../issues) com a mensagem de erro.
+- **Limite de ritmo da própria ferramenta.** Ela se impõe um teto de consultas por minuto, por cortesia com o servidor do tribunal (o portal não documenta limite nenhum). O erro diz quanto esperar; esse erro **não** traz link de relato, porque se resolve esperando.
+- **Sem internet, ou o portal fora do ar.** A mensagem distingue os dois casos.
+
+## Reportar erro, pedir melhoria
+
+- **Erro**: use o link que vem na própria mensagem de erro (abre o formulário de issue do GitHub já preenchido com versão, sistema operacional, tipo do erro e estado do limitador — **nada da sua pesquisa vai junto**, e você revisa antes de enviar). Ou [abra uma issue](../../issues/new) à mão com esses mesmos dados.
+- **Sugestão**: [issue](../../issues/new) também. Diga o que você tentou pesquisar (em abstrato — sem nome de parte nem número de processo, as issues são públicas) e o que esperava.
+- Precisa de conta gratuita no GitHub. O autor mantém isto no tempo livre; resposta pode demorar.
+
+## Segurança e auditoria
+
+Pensado para ser fácil de verificar antes de instalar, não só "confie em mim":
+
+- **Só leitura, sem credenciais.** As buscas fazem requisições HTTP `GET` à API pública do portal (`papyrus.tcero.tc.br`); o inteiro teor baixa o PDF de `tcero.tc.br`. Não pedem login, token nem chave de API. O host do PDF é conferido contra uma lista fechada antes e depois de qualquer redirecionamento — o servidor não segue link para fora do tribunal.
+- **Sem coleta de dados.** Nenhuma telemetria. As únicas conexões são ao tribunal e, uma vez por processo, um `GET` sem dados seus a `api.github.com` para o **aviso de versão nova** (abaixo).
+- **Recibo de custódia (anti-alucinação).** Toda vez que uma decisão é aberta com `obter_acordao_tcero`, o texto que o portal entregou (ementa, dispositivo e, se lido, o PDF) fica gravado em `~/.tcero-jurisprudencia-recibos/<id da decisão>.json`, com hash. Serve para conferir depois, por script ou a olho, se o trecho que foi para a peça está mesmo no documento do tribunal — e não só no que a IA diz ter lido. É texto público de acórdão e fica só na sua máquina; pode apagar a pasta quando quiser. Outra pasta: variável de ambiente `TCERO_MCP_DIR_RECIBOS`.
+- **O texto de IA do próprio tribunal é marcado.** O ePapyrus traz, em cada decisão, um resumo (Fatos/Questão/Regras/Análise/Conclusão) gerado com apoio de IA pelo DEJUR do TCE-RO. A ferramenta o mostra sempre com esse aviso, **nunca** o usa para confirmar uma citação e não o grava como texto do acórdão no recibo.
+- **Aviso de versão nova.** Ao subir, o servidor pergunta ao GitHub qual é a release mais recente. Se houver uma mais nova, a primeira resposta da sessão termina com uma linha avisando, com o endereço da página de releases (fixo no código, nunca tirado da resposta do GitHub). Ele **não baixa nem instala nada** — atualizar é `git pull` na pasta e reiniciar o cliente. Sem internet o aviso não aparece (espera de no máximo 5 segundos, em segundo plano). Para desligar: `TCERO_MCP_SEM_AVISO_ATUALIZACAO=1`.
+- **Quando algo dá errado, a própria mensagem diz o que fazer** — se há versão nova, e como relatar (ver "Reportar erro").
+- **Um arquivo, legível.** Toda a lógica está em [`servidor_tcero.py`](servidor_tcero.py); o `--selftest` roda offline contra respostas reais gravadas em `fixtures/`. Os red teams que auditaram o código, com os achados e o que foi corrigido, estão em [`references/`](references/).
+
+## Atualizar
+
+```bash
+cd /caminho/para/tcero-jurisprudencia-mcp && git pull
+```
+
+Depois, reinicie o Claude (Code ou Desktop). Se o `pip` de dependências mudou, o README da versão nova diz.
+
+## Desinstalar
+
+Claude Code: `claude mcp remove tcero_jurisprudencia`. Claude Desktop: apague o bloco `tcero_jurisprudencia` do `claude_desktop_config.json`. Depois apague a pasta clonada e, se quiser, `~/.tcero-jurisprudencia-recibos/`.
 
 ## Ritmo e disjuntor
 
@@ -409,3 +501,22 @@ processo ou nome de parte).
   (Justiça Federal, portal JSF do CJF). Este é o **TCE-RO** — Tribunal de Contas, controle
   externo (licitação, prestação de contas, responsabilização de gestor) — tribunal e
   jurisdição diferentes dos outros dois.
+
+## Apoie o projeto
+
+O servidor é gratuito e de código aberto, e é mantido no tempo livre de um advogado: cada mudança do portal do TCE-RO exige diagnóstico, correção, testes e versão nova. Se ele economiza o seu tempo, você pode apoiar a continuidade do trabalho com qualquer valor, por **Pix**:
+
+> **Chave Pix (e-mail):** `robertogrecia@hotmail.com`
+
+O apoio é voluntário e não muda nada no uso: o servidor continua igual para todos.
+
+## Autor
+
+**Roberto Grécia Bessa** — OAB/RO 7865-A
+Instagram: [@robertogrecia](https://instagram.com/robertogrecia)
+
+Irmão dos servidores de jurisprudência do [TJRO](https://github.com/robertogecia/tjro-jurisprudencia-mcp) e do [TRF1](https://github.com/robertogecia/trf1-jurisprudencia-mcp), do mesmo autor.
+
+## Licença
+
+MIT — veja [LICENSE](LICENSE).
