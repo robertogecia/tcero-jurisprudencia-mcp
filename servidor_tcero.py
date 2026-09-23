@@ -564,6 +564,19 @@ def _html_para_texto(txt: str) -> str:
     return t.strip()
 
 
+_RE_MARCACAO_HTML = re.compile(r"<\s*/?\s*[a-zA-Z][^>]*>|&(?:[a-zA-Z]+|#\d+|#x[0-9a-fA-F]+);")
+
+
+def _ementa_limpa(s: dict) -> str:
+    """Ementa como TEXTO para conferência literal e recibo. O campo `ementa` do portal é quase
+    sempre texto puro com `\r\n`, mas 33 de 1.689 ementas reais das fixtures trazem `<br>`,
+    `<p>` ou `&nbsp;` (red team 22/09/2026, S3): sem limpar, "<br>" virava a palavra "br" no
+    meio do texto normalizado — no servidor E no lint — e um trecho que atravessava a quebra
+    dava ❌ nos dois. Só passa pelo conversor de HTML quando há marcação; texto puro fica como está."""
+    e = s.get("ementa") or ""
+    return _html_para_texto(e) if _RE_MARCACAO_HTML.search(e) else e
+
+
 def _truncar(t: str, limite: int) -> str:
     t = (t or "").strip()
     if limite and len(t) > limite:
@@ -1063,9 +1076,13 @@ _RE_ASPAS_QUAISQUER = re.compile(r'["“”«»„‟‚‘’‛′″]')
 
 
 def _normalizar_casamento(t: str) -> str:
-    t = _fold(t or "")
+    # "°" (sinal de grau, 136 ementas reais) vira "o" antes do fold: "n°" e "nº" são a mesma
+    # grafia para quem cita (red team 22/09/2026, S5 — o lint faz o mesmo em norm_literal).
+    t = _fold((t or "").replace("\u00b0", "o"))
     t = _RE_ASPAS_QUAISQUER.sub("'", t)
-    t = re.sub(r"[^\w\s']", " ", t)
+    # "_" é \w para o Python mas não é letra para o lint (norm_literal): vira separador aqui
+    # também, senão "art_5" dava ❌ no servidor e ✅ no lint (S5).
+    t = re.sub(r"[^\w\s']|_", " ", t)
     return re.sub(r"\s+", " ", t).strip()
 
 
@@ -1075,13 +1092,21 @@ def _achar_palavras(alvo_norm: str, frag_norm: str, pos: int = 0) -> int:
     `alvo.find(f, pos)`, que dava ✅ para "procedentes" dentro de "improcedentes". `alvo_norm`
     já é de `_normalizar_casamento` (palavras separadas por um único espaço, sem pontuação
     solta), então a fronteira de palavra é só "não precedido/seguido de caractere não-espaço"."""
-    if not frag_norm:
+    # Red team 22/09/2026, S1 (ALTA): o apóstrofo que `alvo_norm` preserva (para o alerta ENTRE
+    # ASPAS) entrava no casamento como se fosse letra — texto com “princípio da legalidade” e
+    # trecho digitado sem as aspas davam ❌ aqui e ✅ no lint (que descarta aspas); o mesmo para
+    # "d’água" × "d água". A aspa/apóstrofo agora é SEPARADOR nas duas pontas: as palavras do
+    # fragmento casam em ordem, separadas por espaço e/ou aspas, com fronteira \w nas pontas.
+    palavras = [w for w in re.split(r"[\s']+", frag_norm or "") if w]
+    if not palavras:
         return -1
-    # Fronteira por \w (não \S): `alvo_norm` preserva o apóstrofo unificado de aspas (para o
-    # alerta ENTRE ASPAS), e um fragmento colado numa aspas ("a conduta..." sem espaço antes)
-    # não pode falhar a fronteira só porque o vizinho é a aspa, não um espaço.
-    m = re.search(r"(?<!\w)" + re.escape(frag_norm) + r"(?!\w)", alvo_norm[pos:])
-    return pos + m.start() if m else -1
+    padrao = r"(?<!\w)'?" + r"[\s']+".join(re.escape(w) for w in palavras) + r"(?!\w)"
+    m = re.search(padrao, alvo_norm[pos:])
+    if not m:
+        return -1
+    ini = m.start() + (1 if m.group(0).startswith("'") else 0)
+    _achar_palavras.ultimo_fim = pos + m.end()  # fim REAL do casamento (pode diferir de len(frag))
+    return pos + ini
 
 
 # Alertas de atribuição (porte TJSE/TRT14, 22/09/2026): um trecho pode casar literalmente e
@@ -1089,20 +1114,29 @@ def _achar_palavras(alvo_norm: str, frag_norm: str, pos: int = 0) -> int:
 # citação de doutrina/lei entre aspas, alegação da parte, ou (caso PRÓPRIO do TCE-RO, que
 # transcreve rotineiramente o parecer ministerial e o relatório técnico) posição do MPC ou do
 # corpo técnico. ✅ continua ✅; a saída avisa de quem é o trecho.
-_RE_NEGACAO_ANTES = re.compile(r"\b(nao|nem|sem|descabe|indefer\w*|improced\w*|afasto)\b")
+# Red team 22/09/2026 (S2/S6), medido nos 4 PDFs reais: "sustenta\w*" casava "sustentabilidade";
+# "o gestor", "o responsável", "justificativa" e "Secretaria" são o VOCABULÁRIO DA PRÓPRIA CORTE
+# num acórdão de contas ("o gestor ignora frontalmente o comando…", "sem justificativa idônea",
+# e "Secretaria de Processamento e Julgamento" é o cabeçalho de TODA página do PDF); "tema" sem
+# número e "nesse sentido" são linguagem corrente do voto. Saíram. A negação ganhou as formas do
+# dispositivo que não usam "não" (rejeito, nego, incabível, descabido, inadmissível, julgo improcedente).
+_RE_NEGACAO_ANTES = re.compile(
+    r"\b(nao|nem|sem|descabe\w*|descabid\w*|incabive\w*|inadmissive\w*|indefer\w*|improced\w*|"
+    r"afasto|afastad\w*|rejeit\w*|nego|negad\w*|negou|vedad\w*)\b"
+)
 _RE_ALEGACAO_PARTE = re.compile(
-    r"\b(alega\w*|sustenta\w*|argumenta\w*|defende\w*|a defesa|o jurisdicionado|o responsavel|"
-    r"o gestor|em suas razoes|justificativa)\b"
+    r"\b(alega\w*|alegou|aduz\w*|sustent(?:a|am|ou|aram|ando)|argument(?:a|am|ou|aram|ando)|"
+    r"defende|defendem|defendeu|defendente|a defesa|em suas razoes|em sede de justificativas?)\b"
 )
 _RE_PARECER_MPC = re.compile(
     r"\b(ministerio publico de contas|mpc|procurador\w*|parecer|corpo tecnico|unidade tecnica|"
-    r"secretaria|relatorio tecnico|opinou|manifestou se|manifestou-se)\b"
+    r"secretaria geral de controle externo|sgce|relatorio tecnico|opinou|manifestou se)\b"
 )
 _RE_TRANSCRICAO = re.compile(
-    r"\b(stf|stj|tcu|tribunal de contas da uniao|sumula|tema|conforme decidiu|nesse sentido|"
-    r"in verbis)\b"
+    r"\b(stf|stj|tcu|tribunal de contas da uniao|sumula|tema \d|conforme decidiu|in verbis)\b"
 )
 _JANELA_NEGACAO_CHARS = 80
+_RE_ASPA_FRONTEIRA = re.compile(r"(?<!\w)'|'(?!\w)")
 _JANELA_ATRIBUICAO_CHARS = 200
 
 
@@ -1139,8 +1173,11 @@ def _alertas_atribuicao(alvo_norm: str, inicio: int, fim: int) -> list[str]:
             "jurisdicionado ou o gestor alega/sustenta/argumenta — pode ser tese da parte "
             "relatada no acórdão, não a decisão da Corte."
         )
-    aspas_antes = alvo_norm[:inicio].count("'")
-    if aspas_antes % 2 == 1 and "'" in alvo_norm[fim:fim + 300]:
+    # Só aspa de FRONTEIRA conta (abre: sem letra antes; fecha: sem letra depois). O apóstrofo
+    # dentro de palavra ("d'agua", "copo d'agua") invertia a paridade e o alerta disparava em
+    # todo o resto do texto (red team 22/09/2026, S7).
+    aspas_antes = len(_RE_ASPA_FRONTEIRA.findall(alvo_norm[:inicio]))
+    if aspas_antes % 2 == 1 and _RE_ASPA_FRONTEIRA.search(alvo_norm[fim:fim + 300]):
         alertas.append(
             "ENTRE ASPAS: o trecho parece estar dentro de aspas no texto — o tribunal pode "
             "estar citando alguém (doutrina, lei, decisão recorrida, outro julgado). Confira de "
@@ -1187,7 +1224,7 @@ def _verificar_trecho(textos: dict[str, str], trecho: str) -> dict:
             else:
                 if inicio < 0:
                     inicio = i
-                pos = fim = i + len(f)
+                pos = fim = getattr(_achar_palavras, "ultimo_fim", i + len(f))
         if not faltando:
             return {
                 "valido": True, "onde": nome, "faltando": [], "sem_texto": False,
@@ -1225,6 +1262,14 @@ def _caminho_recibo_tcero(id_decisao) -> str | None:
     return os.path.join(DIR_RECIBOS, f"{id_txt}.json")
 
 
+def _sha256_campos_recibo(dados: dict) -> str:
+    """sha256 do recibo INTEIRO (menos os dois campos de hash), JSON canônico — o lint da
+    peticao-rg calcula igual (`_sha256_campos_recibo_tcero`); mudar aqui é mudar lá."""
+    base = {k: v for k, v in dados.items() if k not in ("sha256", "sha256_campos")}
+    return hashlib.sha256(json.dumps(base, ensure_ascii=False, sort_keys=True,
+                                     separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
 def _sha256_texto(texto: str) -> str:
     return hashlib.sha256((texto or "").encode("utf-8")).hexdigest()
 
@@ -1254,23 +1299,50 @@ def _gravar_json_recibo_atomico(caminho: str, dados: dict) -> bool:
 # recibo: aqui o objetivo é guardar o EXCERTO real do documento, não só decidir um alerta, então
 # trabalha direto no texto como o portal/PDF entregou, evitando o desalinhamento de índice que a
 # normalização (que remove diacríticos, mudando o comprimento da string) causaria.
+# Mesmo corte de vocabulário dos regex normalizados acima (red team 22/09/2026, S2).
 _RE_TRANSCRICAO_RAW = re.compile(
-    r"(?i)\b(STF|STJ|TCU|Tribunal de Contas da Uni[ãa]o|S[úu]mula|Tema|conforme decidiu|"
-    r"nesse sentido|in verbis)\b"
+    r"(?i)\b(STF|STJ|TCU|Tribunal de Contas da Uni[ãa]o|S[úu]mula|Tema\s+\d|conforme decidiu|in verbis)\b"
 )
 _RE_ALEGACAO_RAW = re.compile(
-    r"(?i)\b(alega\w*|sustenta\w*|argumenta\w*|defende\w*|a defesa|o jurisdicionado|"
-    r"o respons[áa]vel|o gestor|em suas raz[õo]es|justificativa)\b"
+    r"(?i)\b(alega\w*|alegou|aduz\w*|sustent(?:a|am|ou|aram|ando)|argument(?:a|am|ou|aram|ando)|"
+    r"defende|defendem|defendeu|defendente|a defesa|em suas raz[õo]es|em sede de justificativas?)\b"
 )
 _RE_PARECER_MPC_RAW = re.compile(
     r"(?i)\b(Minist[ée]rio P[úu]blico de Contas|MPC|Procurador\w*|parecer|corpo t[ée]cnico|"
-    r"unidade t[ée]cnica|Secretaria|relat[óo]rio t[ée]cnico|opinou|manifestou-?se)\b"
+    r"unidade t[ée]cnica|Secretaria[- ]Geral de Controle Externo|SGCE|relat[óo]rio t[ée]cnico|"
+    r"opinou|manifestou-?se)\b"
 )
 _RE_DIVERGENCIA_RAW = re.compile(
     r"(?i)pe[çc]o v[êe]nia para divergir|voto vencido|voto-vista|divirjo do"
 )
 _JANELA_EXCERTO_RAW = 320  # caracteres do texto bruto guardados a partir do gatilho, por ocorrência
-_TETO_EXCERTOS_POR_CAMPO = 6  # não deixa o recibo crescer sem limite num acórdão longo com muitos gatilhos
+_TETO_EXCERTOS_POR_CAMPO = 40  # era 6: com 84 gatilhos num acórdão real (77649), só os 6 primeiros
+# viravam excerto e a transcrição do parecer no meio do voto passava sem marca (S2). 40 × 320 chars
+# ≈ 13 KB por campo no pior caso; não deixa o recibo crescer sem limite num acórdão longo com muitos gatilhos
+
+
+# Fim de frase: ponto seguido de maiúscula/abertura, que não seja abreviatura usual de acórdão.
+_RE_FIM_FRASE = re.compile(
+    r"(?<!\bn)(?<!\bart)(?<!\barts)(?<!\bfls)(?<!\binc)(?<!\bRel)(?<!\bCons)(?<!\bProc)(?<!\bp)"
+    r"(?<!\bSr)(?<!\bSra)(?<!\bDr)(?<!\bDra)(?<!\bMin)\.\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ(“\"\d])"
+)
+
+
+def _fim_da_voz(texto: str, ini: int, janela: int) -> int:
+    """Quanto do texto, a partir do gatilho em `ini`, ainda é a voz alheia. Red team 22/09/2026
+    (S2): a janela fixa de 320 chars atravessava o ponto final e cobria o DISPOSITIVO da Corte
+    ("…nos termos do relatório técnico. V - Multar, com fulcro…"). Regra: se a frase do gatilho
+    introduz a fala alheia (dois-pontos ou abertura de aspas antes do fim da frase — "o corpo
+    técnico destaca os seguintes pontos:", "opinou pelo que segue:"), a janela inteira vale; se
+    a frase termina antes, a voz alheia termina com ela."""
+    trecho = texto[ini:ini + janela]
+    m = _RE_FIM_FRASE.search(trecho)
+    if not m:
+        return janela
+    antes = trecho[:m.start()]
+    if ":" in antes or "“" in antes or '"' in antes:
+        return janela
+    return m.start() + 1
 
 
 def _excertos_raw(texto: str, regex: re.Pattern, janela: int = _JANELA_EXCERTO_RAW,
@@ -1281,14 +1353,36 @@ def _excertos_raw(texto: str, regex: re.Pattern, janela: int = _JANELA_EXCERTO_R
     dessas zonas, não para reproduzir a frase inteira com precisão editorial."""
     if not texto:
         return []
+    # Linha que se repete 3+ vezes no documento é cabeçalho/rodapé de página do PDF (o do TCE-RO
+    # é "Secretaria de Processamento e Julgamento … Acórdão APL-TC …", em TODA página): gatilho
+    # nela não é voz de ninguém, e o excerto de 320 chars a partir dele cobria o texto da Corte
+    # que vinha logo depois da quebra de página (red team 22/09/2026, S2 — em 98114 os 6
+    # excertos de parecer eram todos esse cabeçalho).
+    linhas = texto.split("\n")
+    contagem: dict[str, int] = {}
+    for ln in linhas:
+        k = re.sub(r"\s+", " ", ln).strip()
+        if k:
+            contagem[k] = contagem.get(k, 0) + 1
+    repetidas = {k for k, n in contagem.items() if n >= 3 and len(k) >= 12}
     saida: list[str] = []
     vistos: set[int] = set()
+    vistos_txt: set[str] = set()
     for m in regex.finditer(texto):
         ini = m.start()
         if any(abs(ini - v) < 40 for v in vistos):  # gatilhos vizinhos do mesmo trecho: 1 excerto só
             continue
+        ini_linha = texto.rfind("\n", 0, ini) + 1
+        fim_linha = texto.find("\n", ini)
+        linha = re.sub(r"\s+", " ", texto[ini_linha:fim_linha if fim_linha >= 0 else len(texto)]).strip()
+        if linha in repetidas:
+            continue
         vistos.add(ini)
-        saida.append(re.sub(r"\s+", " ", texto[ini:ini + janela]).strip())
+        exc = re.sub(r"\s+", " ", texto[ini:ini + _fim_da_voz(texto, ini, janela)]).strip()
+        if exc in vistos_txt:  # mesmo excerto repetido (ementa copiada no PDF): 1 só
+            continue
+        vistos_txt.add(exc)
+        saida.append(exc)
         if len(saida) >= teto:
             break
     return saida
@@ -1317,12 +1411,21 @@ def _gravar_recibo_tcero(s: dict, texto_pdf: str | None = None, texto_pdf_comple
     caminho = _caminho_recibo_tcero(id_decisao)
     if not caminho:
         return
-    ementa = (s.get("ementa") or "").strip()
+    ementa = _ementa_limpa(s).strip()
     dispositivo = _html_para_texto(s.get("acordaoDescricao") or "").strip()
     partes_texto = [p for p in (ementa, dispositivo) if p]
     if texto_pdf:
         partes_texto.append(texto_pdf)
     texto = "\n\n".join(partes_texto)
+    if texto_pdf is None:
+        # Red team 22/09/2026, S4: obter_acordao SEM ler_inteiro_teor (ou com o download do PDF
+        # falhando) sobrescrevia um recibo que já tinha o inteiro teor — o voto sumia da custódia
+        # e a citação do voto, já conferida, passava a dar ERRO no lint. Se o recibo em disco é
+        # íntegro, tem PDF e a mesma ementa+dispositivo, ele fica como está.
+        anterior = _ler_recibo_tcero(id_decisao)
+        if anterior and anterior.get("texto_pdf_completo") is not None \
+                and str(anterior.get("texto") or "").startswith(texto):
+            return
     bruto_para_excertos = "\n\n".join(p for p in (ementa, dispositivo, texto_pdf or "") if p)
     dados = {
         "tribunal": "TCE-RO",
@@ -1346,6 +1449,9 @@ def _gravar_recibo_tcero(s: dict, texto_pdf: str | None = None, texto_pdf_comple
         "texto_parecer_mpc": _excertos_raw(bruto_para_excertos, _RE_PARECER_MPC_RAW),
         "sha256": _sha256_texto(texto),
     }
+    # S8: `sha256` cobre só `texto`; os blocos alheios (parecer, transcrição, alegação) podiam ser
+    # esvaziados à mão e o recibo continuava "íntegro" — e é deles que sai o aviso do lint.
+    dados["sha256_campos"] = _sha256_campos_recibo(dados)
     _gravar_json_recibo_atomico(caminho, dados)
 
 
@@ -1360,6 +1466,8 @@ def _ler_recibo_tcero(id_decisao) -> dict | None:
     if not isinstance(dados, dict):
         return None
     if dados.get("sha256") != _sha256_texto(dados.get("texto") or ""):
+        return None
+    if "sha256_campos" in dados and dados["sha256_campos"] != _sha256_campos_recibo(dados):
         return None
     return dados
 
@@ -2416,7 +2524,7 @@ async def _verificar_citacao(id_decisao: int | str | None, numero_acordao: str |
     for item in resultados[:TETO_DECISOES_VERIFICADAS]:
         s = item.get("source") or {}
         textos = {
-            "ementa": s.get("ementa") or "",
+            "ementa": _ementa_limpa(s),
             "dispositivo (acordaoDescricao)": _html_para_texto(s.get("acordaoDescricao") or ""),
         }
         linhas.extend(_linhas_verificacao_item(s, trecho, textos))
@@ -3377,6 +3485,63 @@ if __name__ == "__main__":
         _shutil.rmtree(DIR_RECIBOS, ignore_errors=True)
         _gravar_recibo_tcero(s_recibo_teste)
         assert _ler_recibo_tcero(98114)["texto_pdf_completo"] is None
+        # --- red team 22/09/2026 (references/red-team-2026-09-22.md) ---
+        # S1: aspas/apóstrofo não são letra no casamento — servidor e lint concordam
+        assert _verificar_trecho({"t": "em observância ao “princípio da legalidade estrita” aplicável"},
+                                 "observância ao princípio da legalidade estrita")["valido"]
+        assert _verificar_trecho({"t": "fornecimento de caixa d’água para a unidade escolar"},
+                                 "fornecimento de caixa d água para a unidade")["valido"]
+        assert _verificar_trecho({"t": "fornecimento de caixa d’água para a unidade escolar"},
+                                 "fornecimento de caixa d'água para a unidade")["valido"]
+        assert not _verificar_trecho({"t": "julgou improcedentes os pedidos formulados pela defesa"},
+                                     "procedentes os pedidos formulados pela defesa")["valido"]
+        _r = _verificar_trecho({"t": "abc “primeiro fragmento aqui” meio do texto e depois segundo fragmento longo fim"},
+                               "primeiro fragmento aqui [...] segundo fragmento longo")
+        assert _r["valido"], _r
+        # S5: n° ≡ nº; "_" é separador
+        assert _verificar_trecho({"t": "multa prevista no art. 55, II, da LC n° 154/96 aplicada"},
+                                 "art. 55, II, da LC nº 154/96 aplicada")["valido"]
+        assert _verificar_trecho({"t": "com fundamento no art_5 inciso segundo da norma"},
+                                 "fundamento no art 5 inciso segundo")["valido"]
+        # S3: ementa com <br>/&nbsp; é limpa antes de conferir e de gravar
+        assert _ementa_limpa({"ementa": "texto da ementa<br>segunda linha&nbsp;da ementa"}) == "texto da ementa\nsegunda linha da ementa"
+        assert _ementa_limpa({"ementa": "Sem marcação\r\nalguma"}) == "Sem marcação\r\nalguma"
+        # S7: apóstrofo dentro de palavra não inverte a paridade das aspas
+        _a = _normalizar_casamento("o copo d’água caiu. Depois o relator decidiu que a conduta do gestor foi regular e bastante clara")
+        _i = _a.index("a conduta")
+        assert not any(x.startswith("ENTRE ASPAS") for x in _alertas_atribuicao(_a, _i, _i + 30))
+        _a = _normalizar_casamento('o relator afirmou "a conduta do gestor é grave e reprovável" e decidiu')
+        _i = _a.index("a conduta")
+        assert any(x.startswith("ENTRE ASPAS") for x in _alertas_atribuicao(_a, _i, _i + 30))
+        # S6: negação sem "não"
+        for _neg in ("rejeito", "nego", "incabível", "descabida", "inadmissível"):
+            _a = _normalizar_casamento(f"Por isso {_neg} a pretensão, porque a multa aplicada ao gestor é proporcional")
+            _i = _a.index("a multa")
+            assert any(x.startswith("NEGAÇÃO") for x in _alertas_atribuicao(_a, _i, _i + 20)), _neg
+        # S2: vocabulário da Corte não é voz alheia; "sustentabilidade" não é "sustenta"
+        _a = _normalizar_casamento("O gestor ignora frontalmente o comando, sem justificativa idônea, e a sustentabilidade do regime exige multa")
+        _i = _a.index("exige multa")
+        assert not [x for x in _alertas_atribuicao(_a, _i, _i + 10) if x.startswith("ALEGAÇÃO")], _alertas_atribuicao(_a, _i, _i + 10)
+        # S2: cabeçalho de página repetido não vira excerto; voz alheia termina no ponto final
+        _cab = "Secretaria de Processamento e Julgamento DP-SPJ Acórdão APL-TC 00055/26"
+        _txt = "\n".join([_cab, "texto da Corte um.", _cab, "texto da Corte dois.", _cab,
+                          "Conforme o relatório técnico. V - Multar o responsável em R$ 5.000,00."])
+        _ex = _excertos_raw(_txt, _RE_PARECER_MPC_RAW)
+        assert _ex == ["relatório técnico."], _ex
+        _ex = _excertos_raw("O corpo técnico destaca os seguintes pontos: i) a obra atrasou. ii) o preço subiu.", _RE_PARECER_MPC_RAW)
+        assert _ex and "o preço subiu" in _ex[0], _ex
+        # S4: gravar sem PDF não apaga o inteiro teor de um recibo íntegro que já o tinha
+        _shutil.rmtree(DIR_RECIBOS, ignore_errors=True)
+        _gravar_recibo_tcero(s_recibo_teste, texto_pdf="Relatorio e voto completos do PDF.", texto_pdf_completo=True)
+        _gravar_recibo_tcero(s_recibo_teste)
+        assert "Relatorio e voto completos" in _ler_recibo_tcero(98114)["texto"]
+        # S8: sha256_campos cobre os blocos alheios — esvaziar texto_parecer_mpc à mão invalida o recibo
+        with open(caminho_98114, "r+", encoding="utf-8") as fh:
+            adulterado = json.load(fh)
+            adulterado["texto_alegacao_parte"] = []
+            fh.seek(0); json.dump(adulterado, fh); fh.truncate()
+        assert _ler_recibo_tcero(98114) is None, "blocos alheios adulterados não podem passar como íntegros"
+        _shutil.rmtree(DIR_RECIBOS, ignore_errors=True)
         # id não numérico: não grava, não lê (proteção de path)
         assert _caminho_recibo_tcero("../etc/passwd") is None
         assert _caminho_recibo_tcero("12; rm -rf") is None
