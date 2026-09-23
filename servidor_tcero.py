@@ -1489,6 +1489,13 @@ _RE_ORGAO_FECHO = re.compile(
 )
 
 
+_SINONIMOS_ORGAO_FECHO = {
+    "tribunal pleno": "Pleno", "pleno do tribunal": "Pleno",
+    "primeira camara": "1ª Câmara", "segunda camara": "2ª Câmara",
+    "1a camara": "1ª Câmara", "2a camara": "2ª Câmara",
+}
+
+
 def _orgao_do_fecho(texto: str) -> str | None:
     """Extrai o órgão julgador do FECHO do acórdão (\"ACORDAM os Senhores Conselheiros do Pleno/
     da 1ª Câmara/da 2ª Câmara do Tribunal de Contas...\"), lendo o inteiro teor em PDF — não o
@@ -1503,6 +1510,10 @@ def _orgao_do_fecho(texto: str) -> str | None:
 
     def _normalizar(bruto_m: str) -> str:
         bruto_m = re.sub(r"\s+", " ", bruto_m).strip()
+        # Red team 22/09/2026-b, achado 7: "Tribunal Pleno"/"Primeira Câmara" são o MESMO órgão
+        # que "Pleno"/"1ª Câmara" — sem isto, um PDF com as duas grafias virava falso conflito
+        # (None) e um com só a grafia longa virava falsa divergência contra o cadastro.
+        bruto_m = _SINONIMOS_ORGAO_FECHO.get(_fold(bruto_m), bruto_m)
         for conhecido in ORGAOS_JULGADORES_CONHECIDOS:
             if _fold(conhecido) == _fold(bruto_m):
                 return conhecido
@@ -1651,6 +1662,14 @@ def _filtrar_por_grupos(resultados: list[dict], grupos: list[list[str]]) -> tupl
 # 22.md (ver também o docstring da tool).                                     #
 # --------------------------------------------------------------------------- #
 
+_RE_FRASE_ASPAS = re.compile(r'["“”]([^"“”]+)["“”]')
+_RE_PONTA_NAO_PALAVRA = re.compile(r"^[^\w]+|[^\w]+$")
+_PALAVRAS_VAZIAS_RELEVANCIA = frozenset(
+    "a o as os e em no na nos nas de da do das dos ao aos um uma uns umas para pra por pelo pela "
+    "pelos pelas com sem que se ou nao sob sobre entre ate apos".split()
+)
+
+
 def _termos_da_consulta(texto_livre: str | None, grupos: list[list[str]] | None) -> list[str]:
     """Lista de termos DISTINTOS (ordem estável, sem repetição) usados para pontuar relevância:
     todo termo de todo grupo, mais as palavras soltas de texto_livre (cada palavra separada por
@@ -1671,7 +1690,19 @@ def _termos_da_consulta(texto_livre: str | None, grupos: list[list[str]] | None)
     for grupo in (grupos or []):
         for t in grupo:
             _add(t)
-    for palavra in _RE_ESPACO.split((texto_livre or "").strip()):
+    # Red team 22/09/2026-b, achados 2 e 3: (i) `"frase exata"` (sintaxe que o portal honra —
+    # protocolo-papyrus.md, A4) vira UM termo de frase, não pedaços com aspas grudadas que nunca
+    # casavam; (ii) pontuação nas pontas sai; (iii) palavra vazia (`de`, `ao`, `à`...) e termo de
+    # 1 letra não pontuam — `\bde` casava o núcleo de 5.047/5.052 decisões do snapshot e só
+    # inflava o denominador de "termos casados". Termos de `grupos` ficam como o usuário escreveu.
+    resto = texto_livre or ""
+    for m in _RE_FRASE_ASPAS.finditer(resto):
+        _add(_RE_ESPACO.sub(" ", m.group(1)).strip())
+    resto = _RE_FRASE_ASPAS.sub(" ", resto)
+    for palavra in _RE_ESPACO.split(resto.strip()):
+        palavra = _RE_PONTA_NAO_PALAVRA.sub("", palavra)
+        if len(_fold(palavra)) < 2 or _fold(palavra) in _PALAVRAS_VAZIAS_RELEVANCIA:
+            continue
         _add(palavra)
     return vistos
 
@@ -1710,7 +1741,17 @@ def _ordenar_por_relevancia(resultados: list[dict], termos: list[str]) -> list[d
     return copia
 
 
-def _bloco_panorama(resultados: list[dict]) -> list[str]:
+def _campo_panorama(v) -> str:
+    """Valor de faceta sempre como texto (red team 22/09/2026-b, achado 4: um `orgaoJulgador` em
+    lista derrubava a busca inteira com TypeError — Counter não aceita lista como chave)."""
+    if v is None:
+        return ""
+    if isinstance(v, (list, tuple)):
+        v = ", ".join(str(x) for x in v if x is not None)
+    return _RE_ESPACO.sub(" ", str(v)).strip()
+
+
+def _bloco_panorama(resultados: list[dict], pos_grupos: bool = False) -> list[str]:
     """Facetas offline sobre as decisões desta busca (só página 1, só com >= 3 decisões — ver
     tool): contagem por órgão julgador, ano, sigla, natureza e os 5 relatores mais frequentes.
     Campo ausente conta como 'sem informação'; nada inventado — nomes exatamente como o
@@ -1722,14 +1763,19 @@ def _bloco_panorama(resultados: list[dict]) -> list[str]:
     siglas: Counter = Counter()
     naturezas: Counter = Counter()
     relatores: Counter = Counter()
+    grafia_relator: dict[str, str] = {}
     for item in resultados:
-        s = item.get("source") or {}
-        orgaos[s.get("orgaoJulgador") or "sem informação"] += 1
-        data = s.get("data") or ""
+        s = (item.get("source") if isinstance(item, dict) else None) or {}
+        orgaos[_campo_panorama(s.get("orgaoJulgador")) or "sem informação"] += 1
+        data = _campo_panorama(s.get("data"))
         anos[data[:4] if len(data) >= 4 and data[:4].isdigit() else "sem informação"] += 1
-        siglas[s.get("sigla") or "sem informação"] += 1
-        naturezas[s.get("natureza") or "sem informação"] += 1
-        relatores[s.get("relator") or "sem informação"] += 1
+        siglas[_campo_panorama(s.get("sigla")) or "sem informação"] += 1
+        naturezas[_campo_panorama(s.get("natureza")) or "sem informação"] += 1
+        rel = _campo_panorama(s.get("relator"))
+        chave = _fold(rel) if rel else "sem informação"
+        grafia_relator.setdefault(chave, rel or "sem informação")  # mesma pessoa em caixa diferente conta uma vez
+        relatores[chave] += 1
+    relatores = Counter({grafia_relator[k]: v for k, v in relatores.items()})
 
     def _fmt(contador, topo: int | None = None) -> str:
         if isinstance(contador, Counter):
@@ -1739,9 +1785,10 @@ def _bloco_panorama(resultados: list[dict]) -> list[str]:
         return "; ".join(f"{k} ({v})" for k, v in itens)
 
     n = len(resultados)
+    universo = ("que casaram todos os grupos" if pos_grupos else "desta busca")
     linhas = [
-        f"\n**Panorama (offline, sobre as {n} decisões desta busca — indício para escolher o "
-        "que ler, nunca conclusão sobre a tese):**",
+        f"\n**Panorama (offline, sobre as {n} decisões {universo} — todas as páginas; indício "
+        "para escolher o que ler, nunca conclusão sobre a tese):**",
         f"- Órgão julgador: {_fmt(orgaos)}",
         f"- Ano: {_fmt(dict(sorted(anos.items(), key=lambda kv: kv[0], reverse=True)))}",
         f"- Sigla: {_fmt(siglas)}",
@@ -2413,7 +2460,14 @@ async def _buscar(texto_livre: str | None, numero_acordao: str | None, numero_pr
 
     linhas: list[str] = []
     filtros_txt = _truncar("; ".join(f"{k}={v}" for k, v in params.items()), 300)
-    ordem_txt = "por relevância (offline, termos da consulta)" if ordenar == "relevancia" else "por data (padrão do portal)"
+    if ordenar == "relevancia" and termos_relevancia:
+        ordem_txt = "por relevância (offline, termos da consulta)"
+    elif ordenar == "relevancia":
+        # Red team 22/09/2026-b, achado 5: só relator/órgão/número não dá termo para pontuar — a
+        # ordem é a do portal, e o cabeçalho dizia "por relevância".
+        ordem_txt = "por data (padrão do portal — sem termo de texto para pontuar relevância)"
+    else:
+        ordem_txt = "por data (padrão do portal)"
     if grupos_ok:
         cab = (
             f"**{total_bruto} decisão(ões)** no portal ePapyrus/TCE-RO (OU nativo) para "
@@ -2461,8 +2515,12 @@ async def _buscar(texto_livre: str | None, numero_acordao: str | None, numero_pr
         else:
             linhas.extend(_resumo_item(s, i))
         if ordenar == "relevancia" and termos_relevancia:
-            _, no_nucleo = _pontuar_relevancia(s, termos_relevancia)
-            linhas.append(f"  termos casados: {no_nucleo}/{len(termos_relevancia)} (núcleo: ementa+dispositivo)")
+            _pts, no_nucleo = _pontuar_relevancia(s, termos_relevancia)
+            so_ia = _pts - 2 * no_nucleo
+            linhas.append(
+                f"  termos casados: {no_nucleo}/{len(termos_relevancia)} (núcleo: ementa+dispositivo)"
+                + (f" · +{so_ia} só em informações adicionais (IA)" if so_ia else "")
+            )
         grupos_so_ia = avisos_ia_por_id.get(s.get("idDecisao"))
         if grupos_so_ia:
             rotulo = ", ".join(f"grupo {n + 1}" for n in grupos_so_ia)
@@ -2479,7 +2537,7 @@ async def _buscar(texto_livre: str | None, numero_acordao: str | None, numero_pr
     if total > pagina * por_pagina:
         linhas.append(f"\nPróxima página: pagina={pagina + 1} (mesmos parâmetros).")
     if pagina == 1 and total >= 3:
-        linhas.extend(_bloco_panorama(todos))
+        linhas.extend(_bloco_panorama(todos, pos_grupos=bool(grupos_ok)))
     return "\n".join(_cortar_bloco(linhas, ORCAMENTO_SAIDA, "resposta da busca"))
 
 
@@ -2817,8 +2875,12 @@ try:
                 de IA valem 1 — e ordena por essa pontuação, desempatando por data. Virou padrão
                 porque a medição em harness/medicao-2026-09-22.md (gabarito cego de 6 consultas
                 típicas de contas, contra um snapshot de 5.052 decisões) mostrou recall@10 médio
-                subindo de 2% (ordem por data) para 62% (relevância sobre o mesmo texto_livre) e
-                72% (grupos + relevância) — melhora em TODAS as 6 consultas, nenhuma piorou.
+                subindo de 2% (ordem por data) para 62% (relevância sobre o mesmo texto_livre) —
+                melhora em TODAS as 6 consultas; numa anotação cega do topo contra a pergunta
+                (red team 22/09/2026-b), precisão@10 de 3% para 70%. `grupos` não rendeu topo
+                melhor que texto_livre nessa anotação (68%): use-o para EXIGIR conceitos, não
+                para ordenar melhor. "frase exata" entre aspas conta como um termo; palavras
+                vazias (de, do, a, ao...) não pontuam.
                 Sem texto_livre nem grupos não há termo para pontuar — "relevancia" se comporta
                 exatamente como "data" nesse caso. Ementa/dispositivo nunca são alterados; só a
                 ORDEM dos itens muda. Peça ordenar="data" explicitamente se quiser a ordem
@@ -3760,6 +3822,28 @@ if __name__ == "__main__":
         assert "sem informação (1)" in _pan  # a natureza None da 3ª decisão
         assert "FULANO (2)" in _pan and "BELTRANO (1)" in _pan
 
+        # --- red team 22/09/2026-b (references/red-team-2026-09-22b.md) ---
+        # achado 2: "frase exata" é UM termo de frase; achado 3: palavra vazia/1 letra não pontua
+        _t22b = _termos_da_consulta('"fraude à licitação" direcionamento, de', None)
+        assert _t22b == ["fraude à licitação", "direcionamento"], _t22b
+        assert _pontuar_relevancia({"ementa": "FRAUDE À LICITAÇÃO. DIRECIONAMENTO."}, _t22b) == (4, 2)
+        assert _termos_da_consulta("tempo de contribuição", None) == ["tempo", "contribuição"]
+        assert _termos_da_consulta("de da à", None) == []
+        assert _termos_da_consulta(None, [["de"]]) == ["de"], "termo de grupo fica como o usuário escreveu"
+        # achado 4: campo em lista/None/data torta não derruba o panorama; relator em caixa
+        # diferente conta uma vez; universo pós-grupos declarado
+        _pan22b = "\n".join(_bloco_panorama([
+            {"source": {"orgaoJulgador": ["Pleno"], "data": "20x6", "relator": "JOSÉ DE TAL"}},
+            {"source": {"orgaoJulgador": "Pleno", "data": None, "relator": "José de  Tal"}},
+            {"source": None}, {},
+        ], pos_grupos=True))
+        assert "Pleno (2)" in _pan22b and "JOSÉ DE TAL (2)" in _pan22b and "que casaram todos os grupos" in _pan22b, _pan22b
+        # achado 7: grafias longas do mesmo órgão não são conflito nem divergência
+        assert _orgao_do_fecho("ACORDAM os Senhores Conselheiros do Tribunal Pleno do Tribunal de Contas") == "Pleno"
+        assert _orgao_do_fecho(_t_um_pleno + " ACORDAM os Senhores Conselheiros do Tribunal Pleno do Tribunal de Contas") == "Pleno"
+        assert _orgao_do_fecho("ACORDAM os Senhores Conselheiros da Primeira Câmara do Tribunal de Contas") == "1ª Câmara"
+        assert _orgao_do_fecho("ACORDAM os Senhores Conselheiros da Primeira Câmara do Tribunal de Contas " + _t_um_pleno) is None
+
         # --- 4. buscar/obter/verificar com rede mockada (fixtures, sem tocar o portal) ---
         _params_vistos: list[dict] = []
 
@@ -3803,6 +3887,9 @@ if __name__ == "__main__":
             assert "ordenado por relevância" in saida_rel and "termos casados" in saida_rel, saida_rel[:300]
             saida_ordem_invalida = asyncio.run(_buscar(None, None, "02603/22", None, None, 1, 10, False, None, "xyz"))
             assert "ordenar inválido" in saida_ordem_invalida and len(_params_vistos) == _n_params_antes + 1, saida_ordem_invalida
+            # red team 22b, achado 5: relevância sem termo de texto não se rotula "por relevância"
+            saida_sem_termo = asyncio.run(_buscar(None, None, "02603/22", None, None, 1, 10, False))
+            assert "sem termo de texto para pontuar" in saida_sem_termo and "termos casados" not in saida_sem_termo, saida_sem_termo[:300]
 
             saida_od = asyncio.run(_obter_acordao(98114, None, None))
             assert "Ementa (integral" in saida_od and "id 98114" in saida_od, saida_od[:200]

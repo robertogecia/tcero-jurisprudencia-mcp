@@ -1,0 +1,7 @@
+{"_metodo": "Anotação manual 22/09/2026 (red team 22b), lendo a ementa (420 caracteres) de cada item do pool embaralhado, sem saber de qual forma (a/b/c) veio. Critério: 1 = a ementa trata do tema da PERGUNTA (não das palavras da regex); 0 = não trata. Um anotador só.",
+ "1": {"relevantes": [94266, 45640, 85572, 89782, 80031, 90670, 49480]},
+ "2": {"relevantes": [97987, 97995, 98010, 97983, 98001, 97985, 98011, 97986, 97988, 98007]},
+ "3": {"relevantes": [98114, 95926, 95228, 93883, 97722]},
+ "4": {"relevantes": [73361, 61154, 74104, 74876, 94373, 79836, 62729, 89817, 89818, 96230, 94757, 67461]},
+ "5": {"relevantes": [91751, 82087, 91758, 91517, 89773, 96539, 75444]},
+ "6": {"relevantes": [73372, 81871, 73696, 85405, 79410, 80705, 68344, 71713]}}
