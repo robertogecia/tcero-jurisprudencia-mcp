@@ -15,9 +15,9 @@ que se supunha antes de testar) em `references/protocolo-papyrus.md`; respostas 
 | Tool | O que faz |
 |---|---|
 | `buscar_jurisprudencia_tcero` | busca por texto livre e/ou por número de acórdão, número de processo, relator ou órgão julgador; `grupos` (E entre grupos, OU dentro do grupo) filtra por 2+ conceitos — o E é feito **no cliente**, porque o portal só sabe fazer OU e ordena por data, não por relevância; paginação **no cliente** (a API do portal não pagina no servidor); resumo compacto por padrão (já com o link do PDF de cada item, corrigido para o host atual), `detalhar=true` para os primeiros itens da página |
-| `obter_acordao_tcero` | detalhe completo de uma decisão — ementa integral, dispositivo (`acordaoDescricao`), informações adicionais (⚠️ geradas por IA pelo DEJUR do próprio tribunal), legislação aplicada, link do PDF do inteiro teor; prefira `id_decisao` (busca direta, resposta pequena); `ler_inteiro_teor=true` baixa esse PDF e EXTRAI O TEXTO REAL (relatório + voto, não só ementa/dispositivo) — ver seção dedicada abaixo |
-| `verificar_citacao_tcero` | confere se um trecho aparece literalmente na ementa ou no dispositivo antes de ir entre aspas — `[...]` separa fragmentos, ❌ vem com o que não bateu |
-| `diagnostico_ritmo_tcero` | estado do disjuntor/limitador, sem rede |
+| `obter_acordao_tcero` | detalhe completo de uma decisão — ementa integral, dispositivo (`acordaoDescricao`), informações adicionais (⚠️ geradas por IA pelo DEJUR do próprio tribunal), legislação aplicada, link do PDF do inteiro teor; prefira `id_decisao` (busca direta, resposta pequena); `ler_inteiro_teor=true` baixa esse PDF e EXTRAI O TEXTO REAL (relatório + voto, não só ementa/dispositivo) — ver seção dedicada abaixo; grava um **recibo de custódia** em disco a cada chamada — ver seção dedicada |
+| `verificar_citacao_tcero` | confere se um trecho aparece literalmente na ementa, no dispositivo ou (quando já lido) no inteiro teor em PDF antes de ir entre aspas — `[...]` separa fragmentos, ❌ vem com o que não bateu; casamento por **palavra inteira** (não substring), mínimo de 15 caracteres não-espaço por fragmento; conferido primeiro contra o **recibo local** (zero requisição) quando ele existe, senão contra o portal; ✅ pode vir com **alertas de atribuição** (o trecho é literal, mas pode não ser a posição da Corte) — ver seção dedicada |
+| `diagnostico_ritmo_tcero` | estado do disjuntor/limitador, sem rede; primeira linha traz a versão instalada |
 
 ## Por que este servidor é mais simples que os irmãos
 
@@ -216,6 +216,85 @@ de PDF numa única chamada — exatamente o tipo de rajada que a moderação de 
 proíbe. Em `obter_acordao_tcero`, ao contrário, cada chamada já é uma decisão específica do
 agente sobre UM acórdão por vez — o lugar certo para este parâmetro.
 
+## Recibo de custódia — 22/09/2026
+
+`obter_acordao_tcero` grava, a cada chamada, um JSON por decisão em
+`~/.tcero-jurisprudencia-recibos/<idDecisao>.json` (diretório configurável por
+`TCERO_MCP_DIR_RECIBOS`, fora do OneDrive por padrão; diretório `0700`, arquivo `0600`).
+Contrato de campos (combinado com o lint da `peticao-rg`,
+`~/.claude/skills/peticao-rg/scripts/lint_citacoes.py`):
+
+```
+tribunal, id_documento, sigla, numero, processo, nr_processo (= processo, para o lint achar
+recibos irmãos do mesmo processo), relator, orgao_cadastro, data_sessao, link, gravado_em,
+fonte, texto, texto_pdf_completo, texto_ia_dejur, texto_transcrito, texto_divergente,
+texto_alegacao_parte, texto_parecer_mpc, sha256
+```
+
+`texto` é ementa + dispositivo (+ o texto do PDF, quando já lido com `ler_inteiro_teor=true`) —
+**nunca** `informacoesAdicionais` (conteúdo de IA do DEJUR, que vai à parte em
+`texto_ia_dejur`; misturar aprovaria como literal do acórdão algo que o tribunal não escreveu).
+`texto_pdf_completo` é sobre a EXTRAÇÃO do PDF (páginas/tempo), não sobre o orçamento de saída
+da tool — o recibo guarda o texto ÍNTEGRO extraído, nunca o cortado para caber na resposta.
+`sha256` é do campo `texto`; um recibo com hash divergente é recusado na leitura (nunca tratado
+como íntegro). As quatro listas `texto_transcrito`/`texto_divergente`/`texto_alegacao_parte`/
+`texto_parecer_mpc` guardam excertos BRUTOS (não normalizados) em torno de cada gatilho de
+atribuição — heurística de janela fixa (320 caracteres), não de frase; vazias quando o detector
+não achou nada.
+
+`verificar_citacao_tcero` confere primeiro contra o recibo (ZERO requisição) quando ele existe
+para o `id_decisao` informado; sem recibo, cai para o portal como antes. A saída diz sempre de
+onde veio o texto conferido (`recibo` ou `portal`).
+
+## Alertas de atribuição — 22/09/2026
+
+Porte do TJSE/TRT14: um trecho pode casar literalmente e ainda não ser "a posição da Corte" —
+pode ser transcrição de outro tribunal, voto vencido, alegação da parte, citação entre aspas
+ou, caso **próprio do TCE-RO** (acórdão de contas transcreve rotineiramente o parecer
+ministerial e o relatório técnico), posição do MPC ou do corpo técnico. `verificar_citacao_tcero`
+examina a vizinhança de todo trecho ✅ e lista os alertas que se aplicam — NEGAÇÃO (até ~80
+caracteres antes), TRANSCRIÇÃO (STF/STJ/TCU/Súmula/Tema/"in verbis"), PARECER DO MPC / CORPO
+TÉCNICO, ALEGAÇÃO DA PARTE e ENTRE ASPAS — sem nunca trocar ✅ por ❌: o trecho É literal, só
+pode não ser da Corte.
+
+Medição (22/09/2026, offline, sobre os 4 PDFs reais de `fixtures/pdf/`): 240 janelas de 400
+caracteres normalizados amostradas aleatoriamente (60 por PDF, seed fixa), cada uma testada
+como se um trecho terminasse no fim da janela —
+
+| Alerta | Disparos | Taxa |
+|---|---|---|
+| PARECER DO MPC / CORPO TÉCNICO | 35/240 | 14,6% |
+| NEGAÇÃO | 17/240 | 7,1% |
+| ALEGAÇÃO DA PARTE | 9/240 | 3,8% |
+| TRANSCRIÇÃO | 4/240 | 1,7% |
+| ENTRE ASPAS | 0/240 | 0,0% |
+
+PARECER DO MPC dispara mais que os outros — esperado em acórdão de contas, que cita
+"Secretaria"/"relatório técnico"/"parecer" com frequência bem maior que um acórdão cível. Não é
+sinal de limiar sensível demais: é a proporção real do vocabulário do TCE-RO. ENTRE ASPAS não
+disparou nenhuma vez nesta amostra — os PDFs reais usam pouca aspa tipográfica reconhecível
+pelo padrão par/ímpar; N pequeno (4 PDFs), não conclusivo sobre a sensibilidade desse alerta
+especificamente.
+
+## Órgão pelo fecho do PDF — só medição, não ligado (22/09/2026)
+
+No TJRO o cadastro errava a câmara em 15/24 processos; no TRT14 acertou 5/5; no TJSE divergia
+na grafia. No TCE-RO **ninguém tinha medido**. `_orgao_do_fecho(texto)` extrai o órgão do FECHO
+do acórdão ("ACORDAM os Senhores Conselheiros do Pleno/da 1ª Câmara/da 2ª Câmara do Tribunal de
+Contas...") e foi testada contra os 4 PDFs reais:
+
+| id | cadastro (`orgaoJulgador`) | fecho do PDF | bate? |
+|---|---|---|---|
+| 77649 | Pleno | Pleno | sim |
+| 85572 | Pleno | Pleno | sim |
+| 96141 | 1ª Câmara | 1ª Câmara | sim |
+| 98114 | Pleno | Pleno | sim |
+
+4/4 bateram — **N=4 não permite concluir nada** sobre a confiabilidade geral do cadastro do
+TCE-RO (o TJRO só revelou o problema em N=24). A função existe, é testada no `--selftest`, mas
+**não está ligada** a nenhuma citação ou verificação: ligar o fecho como fonte da citação (em
+vez do cadastro) é decisão da conversa principal, depois de uma amostra maior.
+
 ## Como pesquisar bem
 
 Informe pelo menos um critério (`texto_livre`, `numero_acordao`, `numero_processo`, `relator`
@@ -290,6 +369,21 @@ bloqueio. Por isso a janela inicial é mais generosa que a dos irmãos (40 requi
 escada 1→5→10→20→30 min, cooldown de 5 min dobrando até 1 h) e só aperta se um bloqueio de
 verdade acontecer. Backoff exponencial curto (até 3 tentativas) em erro de rede/5xx —
 diferente do disjuntor (que reage a recusa persistente), isso cobre instabilidade passageira.
+**Timeout/queda de conexão NÃO arma o disjuntor** (22/09/2026, determinação TJSE→TRF1 replicada
+aqui): o TCE-RO tem respostas reais de até ~20 MB (ver `protocolo-papyrus.md`), e estourar o
+timeout de leitura nelas é esperado, não é recusa do portal — só retentativa moderada, sem
+incidente nem cooldown (`_falha_transitoria`, regressão no `--selftest`).
+
+**Versão e aviso de atualização (22/09/2026):** `diagnostico_ritmo_tcero` mostra a versão
+instalada na primeira linha. Em segundo plano, no máximo uma consulta por processo a
+`api.github.com/repos/robertogecia/tcero-jurisprudencia-mcp/releases/latest` (timeout de 5s,
+nunca bloqueia uma busca, nunca baixa nem instala nada) — se houver versão mais nova, toda
+saída de tool subsequente ganha uma linha `⬆️ Há versão nova (vX.Y.Z): ...`; desligável por
+`TCERO_MCP_SEM_AVISO_ATUALIZACAO=1` (o `--selftest` já desliga sozinho, sem rede real). Erro de
+portal/rede ganha um rodapé com versão, sistema operacional, estado do limitador e — exceto
+para erro de limite de ritmo, que o próprio usuário resolve esperando — um link pré-preenchido
+para relatar em `.../issues/new`, só com dado técnico (nunca o texto da busca, número de
+processo ou nome de parte).
 
 ## Pontos frágeis (onde olhar se quebrar)
 

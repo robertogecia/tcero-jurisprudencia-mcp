@@ -533,3 +533,42 @@ UM acórdão por vez — o lugar certo para este parâmetro, sem esse risco.
    mesmo tempo, só 1 estava nas 10 primeiras posições e só 4 nas 50 primeiras. Isso motivou o
    parâmetro `grupos` (E entre grupos, OU dentro do grupo), implementado no CLIENTE — ver seção
    dedicada "Ordem dos resultados e por que `grupos` é no cliente" acima.
+
+## Porte 22/09/2026 — recibo, palavra inteira, alertas de atribuição, fecho, timeout, versão
+
+Rodada de porte das técnicas que os irmãos (TRT14, TJSE) ganharam depois deste servidor ter
+sido escrito, mais uma camada de produto (versão/crédito/aviso de atualização) — nenhuma delas
+mudou o protocolo do portal em si (a API continua exatamente como documentado acima); mudou
+como este servidor usa o que já extrai dela. Zero requisição nova ao portal — tudo com os
+fixtures já existentes e com os 4 PDFs reais de `fixtures/pdf/`.
+
+1. **Casamento por palavra inteira** (`_achar_palavras`/`_verificar_trecho`): a conferência
+   antiga casava por substring (`alvo.find`), o que deixava "procedentes" bater ✅ dentro de
+   "improcedentes" — mesmo achado (a) do red team do TRT14 de 13/09/2026, replicado aqui.
+   Corrigido com fronteira de PALAVRA (`\w`, não `\S` — precisa ser `\w` porque o texto
+   normalizado preserva o apóstrofo unificado de aspas, para o alerta ENTRE ASPAS) nas duas
+   pontas, mais um piso de 15 caracteres não-espaço POR FRAGMENTO (`TRECHO_MIN_CHARS`).
+2. **Recibo de custódia** (`_gravar_recibo_tcero`/`_ler_recibo_tcero`): ver README, seção
+   dedicada, para o contrato de campos completo (combinado com o lint da `peticao-rg`).
+3. **Alertas de atribuição** (`_alertas_atribuicao`): ver README para a tabela de medição sobre
+   os 4 PDFs reais (240 janelas amostradas) — PARECER DO MPC / CORPO TÉCNICO é o mais frequente
+   (14,6%), esperado no vocabulário de um acórdão de contas.
+4. **Órgão pelo fecho do PDF** (`_orgao_do_fecho`): 4/4 PDFs reais bateram com o cadastro
+   (`orgaoJulgador`) — ver README. N=4 não é amostra suficiente para decidir se o cadastro do
+   TCE-RO tem o mesmo problema que o do TJRO (15/24 errado); a função existe e é testada, mas
+   não está ligada a nenhuma citação.
+5. **Timeout não arma mais o disjuntor** (`_falha_transitoria`, em `_get_com_retentativa`):
+   antes, qualquer `Exception` genérica na última tentativa (incluindo timeout de leitura, que
+   é esperado nas respostas de até ~20 MB que este portal já devolveu — ver Experimento C
+   acima) chamava `_registrar_bloqueio_detectado` incondicionalmente, contando como incidente e
+   armando um cooldown por causa do TAMANHO normal de uma resposta, não de recusa nenhuma do
+   portal. Determinação TJSE→TRF1 de 22/09/2026, replicada aqui: só falha que indica RECUSA do
+   portal (HTTP 403/429/5xx persistente) arma o disjuntor; falha de rede/timeout só retenta.
+6. **Camada de produto** (`VERSAO`, `_com_credito`, `_checar_versao_nova`, `_rodape_erro`,
+   `_link_relato`): porte de `~/MCP/tjro-jurisprudencia-mcpb/server/lib.js` (crédito do autor,
+   aviso de versão nova via GitHub Releases em segundo plano, rodapé de erro com link de issue
+   pré-preenchido só com dado técnico). `[NÃO TESTADO ONLINE]`: a chamada real a
+   `api.github.com/repos/robertogecia/tcero-jurisprudencia-mcp/releases/latest` — o repositório
+   pode nem ter releases ainda; a regressão do `--selftest` mocka `httpx.AsyncClient` para os
+   cinco cenários (maior/igual/menor/erro de rede/HTTP≠200) e o `--selftest` roda com
+   `TCERO_MCP_SEM_AVISO_ATUALIZACAO=1`, então nunca bate na rede de verdade.
