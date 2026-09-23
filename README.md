@@ -3,26 +3,17 @@
 [![tests](https://github.com/robertogecia/tcero-jurisprudencia-mcp/actions/workflows/test.yml/badge.svg)](https://github.com/robertogecia/tcero-jurisprudencia-mcp/actions/workflows/test.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Isto ensina qualquer advogado — **sem conhecimento nenhum de informática** — a dar ao Claude a
-capacidade de pesquisar a jurisprudência do **Tribunal de Contas do Estado de Rondônia (TCE-RO)**
-dentro da própria conversa, sem abrir o portal do tribunal. Sem login, sem senha e sem mexer em
-código. Serve para quem atua em licitação e contrato administrativo, prestação de contas,
-responsabilização de gestor, multa e débito, ato de pessoal (aposentadoria, pensão, admissão) e
-representação perante a Corte de Contas.
+Pesquise a jurisprudência do **Tribunal de Contas do Estado de Rondônia (TCE-RO)** dentro da
+conversa com o Claude, sem abrir o portal do tribunal, sem login e sem mexer em código. Feito
+para advogados **sem conhecimento nenhum de informática**. Comece pela instalação, logo abaixo.
 
-## Antes de começar: você já tem o "Claude Desktop"?
+## Instalar (3 passos, uns 2 minutos)
 
-O "Claude Desktop" é o **programa** do Claude que você instala no computador (diferente de usar o
-Claude pelo site, no navegador). É ele que faz a pesquisa funcionar — sem ele instalado, nada dos
-passos abaixo funciona.
-
-- **Já tenho** (uso o Claude num aplicativo separado, não numa aba do navegador) → pule para o
-  "Passo 1".
-- **Não sei, ou uso só pelo navegador** → baixe primeiro o programa em
-  **[claude.com/download](https://claude.com/download)**, instale, entre com a sua conta e volte
-  aqui.
-
-## Instalar a pesquisa do TCE-RO (3 passos, uns 2 minutos)
+**Você precisa do "Claude Desktop"** — o *programa* do Claude instalado no computador (Mac ou
+Windows), não o site no navegador nem o aplicativo do celular. Se você usa o Claude num
+aplicativo separado, já tem. Se usa só pelo navegador, baixe primeiro o programa em
+**[claude.com/download](https://claude.com/download)**, instale, entre com a sua conta e volte
+aqui.
 
 ### Passo 1 — Baixe o arquivo
 
