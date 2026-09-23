@@ -390,7 +390,7 @@ Este é um **servidor MCP em Python**. Funciona em qualquer cliente que fale MCP
 2. No Claude Desktop: Configurações → Extensões → arraste o arquivo (ou "Instalar extensão…").
 3. Abra uma conversa nova e peça uma busca no TCE-RO.
 
-O pacote é um porte em Node do servidor Python deste repositório (fonte de verdade: mudança de comportamento entra primeiro aqui, com red team, depois no pacote, com o teste de paridade). Diferenças conhecidas: a extração de texto do PDF (pdfjs-dist × PyMuPDF) não é byte-idêntica no espaçamento — o casamento de citações e o recibo funcionam igual, mas um recibo gravado pelo pacote não tem o mesmo hash de um gravado pelo Python para o mesmo acórdão; e o diagnóstico de ritmo mostra horas em UTC. Precisa de Node? Não: o Claude Desktop traz o runtime.
+O pacote é um porte em Node do servidor Python deste repositório (código-fonte em [tcero-jurisprudencia-mcpb](https://github.com/robertogecia/tcero-jurisprudencia-mcpb)) (fonte de verdade: mudança de comportamento entra primeiro aqui, com red team, depois no pacote, com o teste de paridade). Diferenças conhecidas: a extração de texto do PDF (pdfjs-dist × PyMuPDF) não é byte-idêntica no espaçamento — o casamento de citações e o recibo funcionam igual, mas um recibo gravado pelo pacote não tem o mesmo hash de um gravado pelo Python para o mesmo acórdão; e o diagnóstico de ritmo mostra horas em UTC. Precisa de Node? Não: o Claude Desktop traz o runtime.
 
 ## Instalar o servidor Python (uns 5 minutos)
 
