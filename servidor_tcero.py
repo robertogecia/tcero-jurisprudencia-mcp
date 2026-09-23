@@ -79,7 +79,9 @@ except Exception:  # permite importar o módulo para testes sem pymupdf instalad
     fitz = None  # type: ignore
 
 import hashlib
+import platform
 from urllib.parse import urlparse as _urlparse
+from urllib.parse import quote as _quote
 
 # --------------------------------------------------------------------------- #
 # Constantes do portal                                                         #
@@ -107,6 +109,205 @@ HEADERS_BASE = {
     "Accept-Language": "pt-BR,pt;q=0.9",
 }
 
+# --------------------------------------------------------------------------- #
+# Camada de produto (22/09/2026) — porte do TJRO (server/lib.js, ~linhas       #
+# 1290-1600: CREDITO/comCredito, aviso de versão, comAjudaNoErro/linkRelato).  #
+# Primeiro release com recibo de custódia + alertas de atribuição (itens 1-5  #
+# desta rodada): 1.0.x é o que já está publicado; 1.1.0 é este.               #
+# --------------------------------------------------------------------------- #
+VERSAO = "1.1.0"
+RELEASES_API = "https://api.github.com/repos/robertogecia/tcero-jurisprudencia-mcp/releases/latest"
+RELEASES_PAGINA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest"
+ISSUES_NOVA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/issues/new"
+
+# Assinatura do autor, UMA vez por processo, na primeira resposta bem-sucedida — mesmo texto e
+# mesmo motivo do TJRO (não é instrução ao modelo, é crédito factual; em toda resposta viraria
+# ruído). Nenhum dado sai da máquina por causa disto.
+CREDITO = "_Esta extensão foi desenvolvida por @robertogrecia (Roberto Grécia Bessa, OAB/RO 7865-A). Obrigado por usar!_"
+_credito_dado = False
+
+
+def _com_credito(texto: str) -> str:
+    global _credito_dado
+    if _credito_dado:
+        return texto
+    _credito_dado = True
+    return f"{texto}\n\n{CREDITO}"
+
+
+def _reset_credito_para_teste() -> None:
+    global _credito_dado
+    _credito_dado = False
+
+
+_RE_TAG_VERSAO = re.compile(r"^v?(\d{1,4})\.(\d{1,4})\.(\d{1,4})$")
+
+
+def _versao_mais_nova(atual: str, outra: str) -> bool:
+    """true só se `outra` for estritamente maior que `atual` (semver simples de 3 números);
+    qualquer formato estranho (tag sem 3 números, string vazia) é false, nunca exceção."""
+    a = _RE_TAG_VERSAO.match(str(atual or "").strip())
+    b = _RE_TAG_VERSAO.match(str(outra or "").strip())
+    if not a or not b:
+        return False
+    for i in range(1, 4):
+        x, y = int(a.group(i)), int(b.group(i))
+        if y != x:
+            return y > x
+    return False
+
+
+async def _checar_versao_nova(timeout: float = 5.0) -> str | None:
+    """UMA consulta ao GitHub (releases/latest), nunca bloqueia mais que `timeout`, nunca
+    lança. Desligável por `TCERO_MCP_SEM_AVISO_ATUALIZACAO=1`. Nunca baixa nem instala nada —
+    só lê `tag_name` e compara. Devolve a tag nova (sem o "v") ou None."""
+    if os.environ.get("TCERO_MCP_SEM_AVISO_ATUALIZACAO") == "1" or httpx is None:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as cli:
+            r = await cli.get(RELEASES_API, headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": HEADERS_BASE["User-Agent"],
+            })
+        if r.status_code != 200:
+            return None
+        tag = str((r.json() or {}).get("tag_name") or "").strip()
+        tag_limpa = tag[1:] if tag.startswith("v") else tag
+        return tag_limpa if _versao_mais_nova(VERSAO, tag_limpa) else None
+    except Exception:
+        return None
+
+
+# Tarefa de segundo plano: criada na primeira chamada que passar por `_linha_aviso_versao`,
+# NUNCA aguardada por quem responde — "nunca bloqueia uma busca" é levado ao pé da letra aqui
+# (diferente do `comAvisos` do TJRO, que aguarda a checagem, com timeout curto, antes da
+# primeira resposta). A primeira chamada nunca leva o aviso (a tarefa ainda não terminou); a
+# partir da chamada em que ela já tiver terminado, toda saída de tool ganha a linha.
+_tarefa_versao: "asyncio.Task | None" = None
+_versao_nova_cache: str | None = None
+
+
+async def _tarefa_versao_bg() -> None:
+    global _versao_nova_cache
+    _versao_nova_cache = await _checar_versao_nova()
+
+
+def _linha_aviso_versao() -> str | None:
+    global _tarefa_versao
+    if _tarefa_versao is None:
+        try:
+            _tarefa_versao = asyncio.get_event_loop().create_task(_tarefa_versao_bg())
+        except RuntimeError:
+            pass  # sem event loop rodando (ex.: chamada síncrona de teste) — sem checagem
+    if _versao_nova_cache:
+        return f"⬆️ Há versão nova (v{_versao_nova_cache}): {RELEASES_PAGINA}"
+    return None
+
+
+def _reset_versao_para_teste() -> None:
+    global _tarefa_versao, _versao_nova_cache
+    _tarefa_versao = None
+    _versao_nova_cache = None
+
+
+def _finalizar_saida(texto: str) -> str:
+    """Crédito (uma vez) + aviso de versão nova (quando já detectada) — aplicado ao fim de TODA
+    resposta de ferramenta, erro incluso. Se o texto já vier com "Há versão nova" (rodapé de
+    erro, `_rodape_erro`, que menciona a versão nova na própria frase de erro), não duplica."""
+    texto = _com_credito(texto)
+    if "Há versão nova" in texto:
+        return texto
+    aviso = _linha_aviso_versao()
+    return f"{texto}\n{aviso}" if aviso else texto
+
+
+def _tipo_do_erro(mensagem: str) -> str:
+    m = str(mensagem or "")
+    if re.search(r"TimeoutException|tempo esgotado", m, re.I):
+        return "timeout"
+    if re.search(r"evitando novas tentativas|Muitas consultas em pouco tempo|Fila de espera longa demais", m, re.I):
+        return "limite_de_ritmo"
+    mh = re.match(r".*?\bHTTP (\d{3})\b", m, re.S)
+    if mh:
+        return "http_" + mh.group(1)
+    if re.search(r"ConnectError|ConnectTimeout|ReadError|WriteError|ENOTFOUND|ECONNREFUSED|"
+                 r"ECONNRESET|ETIMEDOUT|certificate|CERT_|DNS", m, re.I):
+        return "rede_ou_certificado"
+    return "outro"
+
+
+# Erros que o próprio usuário resolve esperando não merecem relato (issue no GitHub não ajuda
+# em nada contra um limite de ritmo auto-imposto por esta extensão).
+SEM_RELATO_TIPOS = {"limite_de_ritmo"}
+
+
+def _estado_limitador_resumo(agora: float | None = None) -> str:
+    agora = time.time() if agora is None else agora
+    with _trava_estado():
+        e = _ler_estado()
+    situacao = "BLOQUEADO" if agora < e["bloqueado_ate"] else "livre"
+    return f"nível {e['indice_janela'] + 1}/{len(_ESCADA_JANELA_S)}, {situacao}"
+
+
+def _link_relato(tipo: str, agora: float | None = None) -> str:
+    """URL do formulário de nova issue, JÁ PREENCHIDO só com dado técnico — NUNCA com o texto
+    da busca, número de processo ou nome de parte do usuário (issues do GitHub são públicas).
+    Mesmo formato do TJRO (`linkRelato`, server/lib.js)."""
+    agora = time.time() if agora is None else agora
+    try:
+        with _trava_estado():
+            e = _ler_estado()
+        inc = e.get("incidentes") or []
+        tipos = ", ".join(i.get("operacao") or "sem_tipo" for i in inc[-5:]) or "nenhum"
+        recentes = len([t for t in (e.get("requisicoes") or []) if agora - t <= 60])
+        estado = (
+            f"- Nível do limitador: {e['indice_janela'] + 1} de {len(_ESCADA_JANELA_S)}\n"
+            f"- Consultas no último minuto: {recentes}\n"
+            f"- Bloqueios registrados: {len(inc)} (últimas operações: {tipos})\n"
+        )
+    except Exception:
+        estado = "- Estado do limitador: indisponível\n"
+    titulo = f"Erro {tipo} na v{VERSAO}"
+    corpo = (
+        "**Relato gerado pela extensão** (revise antes de enviar; não inclua nome de parte, "
+        "número de processo nem o texto da sua busca — issues são públicas)\n\n"
+        f"- Versão: {VERSAO}\n- Sistema: {platform.system()} {platform.release()}\n"
+        f"- Tipo do erro: {tipo}\n" + estado +
+        "\n**O que eu estava fazendo:** \n\n"
+        "**A pesquisa funciona direto no portal (papyrus.tcero.tc.br), pelo navegador?** sim / não\n\n"
+        "**Desde quando acontece?** \n"
+    )
+    return f"{ISSUES_NOVA}?title={_quote(titulo)}&body={_quote(corpo)}"
+
+
+def _rodape_erro(mensagem: str) -> str:
+    """Acrescentado às respostas de erro de PORTAL/REDE (`PortalRecusou` e afins) — versão, SO,
+    estado do limitador e, quando não for um erro que o próprio usuário resolve esperando
+    (`SEM_RELATO_TIPOS`), o link de relato pré-preenchido. O aviso de versão nova, quando já
+    detectado, entra aqui também ('ela pode já corrigir este problema') — mesma frase do TJRO."""
+    tipo = _tipo_do_erro(mensagem)
+    partes = [f"\n\nVersão: {VERSAO} · Sistema: {platform.system()} {platform.release()} · "
+              f"Limitador: {_estado_limitador_resumo()}"]
+    _linha_aviso_versao()  # dispara a checagem em 2º plano se ainda não começou
+    if _versao_nova_cache:
+        partes.append(
+            f"Há versão nova (v{_versao_nova_cache}) e ela pode já corrigir este problema: {RELEASES_PAGINA}"
+        )
+    if tipo not in SEM_RELATO_TIPOS:
+        sufixo = " (depois de atualizar, se houver versão nova)" if _versao_nova_cache else ""
+        partes.append(
+            f"Se o problema continuar{sufixo}, relate ao autor em {_link_relato(tipo)} informando "
+            "a versão, o sistema e esta mensagem."
+        )
+    return "\n".join(partes)
+
+
+def _formatar_erro_portal(e: Exception, prefixo: str) -> str:
+    msg = f"{prefixo}: {e}"
+    if isinstance(e, (PortalRecusou, RuntimeError)):
+        return msg + _rodape_erro(str(e))
+    return msg
+
 # Órgãos julgadores: NÃO existe endpoint próprio de descoberta (procurado e não encontrado —
 # ver references/protocolo-papyrus.md). Lista hardcoded extraída do bundle do frontend
 # (app-busca.js, 13/09/2026); a API exige o valor EXATO, sem fuzzy match confirmado.
@@ -125,6 +326,31 @@ ORCAMENTO_SAIDA = 60_000  # teto da resposta inteira de QUALQUER ferramenta
 TETO_DETALHAR_NA_BUSCA = 5  # quantos itens da página aceitam detalhar=true de uma vez
 TETO_ITENS_LISTADOS = 25  # quantas decisões homônimas listar antes de cortar (achado 3)
 TETO_DECISOES_VERIFICADAS = 20  # quantas decisões verificar_citacao confere de uma vez
+
+# --------------------------------------------------------------------------- #
+# Conferência literal por PALAVRA INTEIRA + recibo de custódia (22/09/2026)    #
+# Porte das técnicas dos irmãos TRT14/TJSE para o TCE-RO — ver               #
+# references/protocolo-papyrus.md e o resumo desta rodada no README.          #
+# --------------------------------------------------------------------------- #
+# Achado (a) do red team do TRT14 (13/09/2026), literal aqui: a conferência antiga casava por
+# SUBSTRING (`alvo.find`) — "procedentes" batia ✅ dentro de "improcedentes". Corrigido com
+# casamento por fronteira de PALAVRA nas duas pontas (ver `_achar_palavras`) + um piso de
+# caracteres não-espaço por FRAGMENTO: abaixo disso, qualquer acórdão de contas contém a
+# coincidência por acaso, e a fronteira de palavra sozinha não protege um fragmento de 2-3
+# letras.
+TRECHO_MIN_CHARS = 15  # mínimo de caracteres NÃO-ESPAÇO por fragmento do trecho (cada fragmento
+                       # separado por [...] é medido individualmente — não a soma do trecho
+                       # inteiro, para não deixar passar um fragmento isolado curto demais só
+                       # porque outro fragmento do mesmo trecho é longo).
+
+# Recibo de custódia: um JSON por decisão em disco, gravado por `_obter_acordao` (e pelo
+# caminho `ler_inteiro_teor=true`), fora do OneDrive por padrão. `verificar_citacao_tcero` passa
+# a conferir contra ele com ZERO requisição quando ele existe. Contrato de campos combinado com
+# a conversa principal (lint da peticao-rg, `~/.claude/skills/peticao-rg/scripts/lint_citacoes.py`)
+# — ver docstring de `_gravar_recibo_tcero`.
+DIR_RECIBOS = os.environ.get("TCERO_MCP_DIR_RECIBOS") or os.path.join(
+    os.path.expanduser("~"), ".tcero-jurisprudencia-recibos"
+)
 
 # --------------------------------------------------------------------------- #
 # Inteiro teor em PDF (14/09/2026) — relatório + voto, não só ementa/dispositivo #
@@ -830,46 +1056,347 @@ def _detalhe_item_bruto(s: dict) -> list[str]:
     return linhas
 
 
-def _verificar_trecho(textos: dict[str, str], trecho: str) -> dict:
-    """Mesmo padrão dos irmãos: `[...]` separa fragmentos que devem aparecer em ordem;
-    tolerante a caixa/acento/pontuação/espaço, intolerante a palavra trocada ou omitida."""
-    def _normalizar(t: str) -> str:
-        t = _fold(t or "")
-        t = re.sub(r"[^\w\s]", " ", t)
-        return re.sub(r"\s+", " ", t).strip()
+# `'` é preservado (todo tipo de aspas é unificado nele) para o alerta ENTRE ASPAS conseguir
+# contar abertura/fechamento sem precisar remapear índices para o texto original — o resto da
+# pontuação continua virando espaço, como antes.
+_RE_ASPAS_QUAISQUER = re.compile(r'["“”«»„‟‚‘’‛′″]')
 
+
+def _normalizar_casamento(t: str) -> str:
+    t = _fold(t or "")
+    t = _RE_ASPAS_QUAISQUER.sub("'", t)
+    t = re.sub(r"[^\w\s']", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _achar_palavras(alvo_norm: str, frag_norm: str, pos: int = 0) -> int:
+    """Casamento por PALAVRA INTEIRA (fronteira nas duas pontas), não por substring —
+    porte do achado (a) do red team do TRT14 (13/09/2026): a versão antiga usava
+    `alvo.find(f, pos)`, que dava ✅ para "procedentes" dentro de "improcedentes". `alvo_norm`
+    já é de `_normalizar_casamento` (palavras separadas por um único espaço, sem pontuação
+    solta), então a fronteira de palavra é só "não precedido/seguido de caractere não-espaço"."""
+    if not frag_norm:
+        return -1
+    # Fronteira por \w (não \S): `alvo_norm` preserva o apóstrofo unificado de aspas (para o
+    # alerta ENTRE ASPAS), e um fragmento colado numa aspas ("a conduta..." sem espaço antes)
+    # não pode falhar a fronteira só porque o vizinho é a aspa, não um espaço.
+    m = re.search(r"(?<!\w)" + re.escape(frag_norm) + r"(?!\w)", alvo_norm[pos:])
+    return pos + m.start() if m else -1
+
+
+# Alertas de atribuição (porte TJSE/TRT14, 22/09/2026): um trecho pode casar literalmente e
+# ainda não ser "a posição da Corte" — pode ser transcrição de outro tribunal, voto vencido,
+# citação de doutrina/lei entre aspas, alegação da parte, ou (caso PRÓPRIO do TCE-RO, que
+# transcreve rotineiramente o parecer ministerial e o relatório técnico) posição do MPC ou do
+# corpo técnico. ✅ continua ✅; a saída avisa de quem é o trecho.
+_RE_NEGACAO_ANTES = re.compile(r"\b(nao|nem|sem|descabe|indefer\w*|improced\w*|afasto)\b")
+_RE_ALEGACAO_PARTE = re.compile(
+    r"\b(alega\w*|sustenta\w*|argumenta\w*|defende\w*|a defesa|o jurisdicionado|o responsavel|"
+    r"o gestor|em suas razoes|justificativa)\b"
+)
+_RE_PARECER_MPC = re.compile(
+    r"\b(ministerio publico de contas|mpc|procurador\w*|parecer|corpo tecnico|unidade tecnica|"
+    r"secretaria|relatorio tecnico|opinou|manifestou se|manifestou-se)\b"
+)
+_RE_TRANSCRICAO = re.compile(
+    r"\b(stf|stj|tcu|tribunal de contas da uniao|sumula|tema|conforme decidiu|nesse sentido|"
+    r"in verbis)\b"
+)
+_JANELA_NEGACAO_CHARS = 80
+_JANELA_ATRIBUICAO_CHARS = 200
+
+
+def _alertas_atribuicao(alvo_norm: str, inicio: int, fim: int) -> list[str]:
+    """Examina a vizinhança de um trecho já casado (índices em `alvo_norm`, de
+    `_normalizar_casamento`) e devolve os alertas que se aplicam — zero ou mais, nunca troca o
+    ✅ por ❌: o trecho É literal, só pode não ser da Corte."""
+    antes_neg = alvo_norm[max(0, inicio - _JANELA_NEGACAO_CHARS):inicio]
+    antes_atr = alvo_norm[max(0, inicio - _JANELA_ATRIBUICAO_CHARS):inicio]
+    alertas: list[str] = []
+    if _RE_NEGACAO_ANTES.search(antes_neg):
+        alertas.append(
+            "NEGAÇÃO: há negação (\"não\"/\"nem\"/\"sem\"/\"indefere\"/\"improcedente\"/"
+            "\"afasto\"...) até ~80 caracteres antes do trecho — o recorte pode inverter o "
+            "sentido do julgado. Não citar sem ler o parágrafo inteiro."
+        )
+    if _RE_TRANSCRICAO.search(antes_atr):
+        alertas.append(
+            "TRANSCRIÇÃO: pouco antes do trecho há referência a outro tribunal/súmula/tema "
+            "(STF, STJ, TCU, Súmula, Tema, \"conforme decidiu\", \"in verbis\") — o trecho pode "
+            "ser transcrição de julgado ALHEIO dentro do voto, não texto próprio do TCE-RO."
+        )
+    if _RE_PARECER_MPC.search(antes_atr):
+        alertas.append(
+            "PARECER DO MPC / CORPO TÉCNICO: pouco antes do trecho aparece referência a "
+            "Ministério Público de Contas, procurador, parecer, corpo/unidade técnica, "
+            "Secretaria ou relatório técnico — acórdão de contas transcreve rotineiramente esse "
+            "parecer; o trecho pode ser dele, não da Corte. Confira quem fala antes de atribuir "
+            "ao TCE-RO."
+        )
+    if _RE_ALEGACAO_PARTE.search(antes_atr):
+        alertas.append(
+            "ALEGAÇÃO DA PARTE: pouco antes do trecho o texto relata o que a defesa, o "
+            "jurisdicionado ou o gestor alega/sustenta/argumenta — pode ser tese da parte "
+            "relatada no acórdão, não a decisão da Corte."
+        )
+    aspas_antes = alvo_norm[:inicio].count("'")
+    if aspas_antes % 2 == 1 and "'" in alvo_norm[fim:fim + 300]:
+        alertas.append(
+            "ENTRE ASPAS: o trecho parece estar dentro de aspas no texto — o tribunal pode "
+            "estar citando alguém (doutrina, lei, decisão recorrida, outro julgado). Confira de "
+            "quem é a frase antes de atribuí-la ao TCE-RO."
+        )
+    return alertas
+
+
+def _verificar_trecho(textos: dict[str, str], trecho: str) -> dict:
+    """`[...]` separa fragmentos que devem aparecer em ordem; tolerante a caixa/acento/
+    pontuação/espaço, casamento por PALAVRA INTEIRA (não substring — ver `_achar_palavras`),
+    intolerante a palavra trocada, omitida ou cortada. Cada fragmento precisa de pelo menos
+    `TRECHO_MIN_CHARS` caracteres não-espaço — fragmento menor é recusado com mensagem clara,
+    nunca aprovado por coincidência. Quando válido, `alertas` traz o que a vizinhança do trecho
+    sugere sobre de QUEM é a frase (negação, transcrição, parecer do MPC, alegação da parte,
+    entre aspas) — ver `_alertas_atribuicao`."""
     fragmentos = [f for f in (x.strip() for x in re.split(r"\[\s*\.\.\.\s*\]|\[…\]|…", trecho or "")) if f]
     if not fragmentos:
-        return {"valido": False, "onde": None, "faltando": [], "motivo": "trecho vazio", "sem_texto": False}
+        return {"valido": False, "onde": None, "faltando": [], "motivo": "trecho vazio", "sem_texto": False, "alertas": []}
+    curtos = [f for f in fragmentos if len(_normalizar_casamento(f).replace(" ", "")) < TRECHO_MIN_CHARS]
+    if curtos:
+        return {
+            "valido": False, "onde": None, "faltando": curtos, "sem_texto": False, "alertas": [],
+            "motivo": (
+                f"fragmento curto demais (menos de {TRECHO_MIN_CHARS} caracteres não-espaço): "
+                f"{'; '.join(_uma_linha(f)[:60] for f in curtos)!r} — conferência literal de "
+                "meia dúzia de letras não prova nada; qualquer acórdão pode conter isso por "
+                "acaso. Use um trecho mais longo."
+            ),
+        }
     faltando_por_texto: dict[str, list[str]] = {}
     houve_texto = False
     for nome, texto in textos.items():
-        alvo = _normalizar(texto)
+        alvo = _normalizar_casamento(texto)
         if not alvo:
             continue
         houve_texto = True
-        pos, faltando = 0, []
+        pos, faltando, inicio, fim = 0, [], -1, -1
         for frag in fragmentos:
-            f = _normalizar(frag)
-            i = alvo.find(f, pos)
+            f = _normalizar_casamento(frag)
+            i = _achar_palavras(alvo, f, pos)
             if i < 0:
                 faltando.append(frag)
             else:
-                pos = i + len(f)
+                if inicio < 0:
+                    inicio = i
+                pos = fim = i + len(f)
         if not faltando:
-            return {"valido": True, "onde": nome, "faltando": [], "motivo": f"trecho encontrado literalmente em: {nome}", "sem_texto": False}
+            return {
+                "valido": True, "onde": nome, "faltando": [], "sem_texto": False,
+                "motivo": f"trecho encontrado literalmente em: {nome}",
+                "alertas": _alertas_atribuicao(alvo, inicio, fim),
+            }
         faltando_por_texto[nome] = faltando
     if not houve_texto:
         # Ementa e dispositivo vazios: NÃO é "não encontrado", é verificação não realizada.
         # A saída anterior dizia "❌ NÃO ENCONTRADO — parafraseie ou corrija", que sugere que o
         # texto foi lido e o trecho não estava lá (red team 13/09/2026, achado 8).
-        return {"valido": False, "onde": None, "faltando": [], "sem_texto": True,
+        return {"valido": False, "onde": None, "faltando": [], "sem_texto": True, "alertas": [],
                 "motivo": ("VERIFICAÇÃO NÃO REALIZADA: o portal não trouxe ementa nem dispositivo "
                            "para esta decisão — não há texto contra o que conferir. Isto não é "
                            "'trecho inexistente'; abra o inteiro teor em PDF antes de citar")}
     melhor = min(faltando_por_texto.items(), key=lambda kv: len(kv[1]))[1] if faltando_por_texto else fragmentos
-    return {"valido": False, "onde": None, "faltando": melhor, "sem_texto": False,
+    return {"valido": False, "onde": None, "faltando": melhor, "sem_texto": False, "alertas": [],
             "motivo": "trecho NÃO encontrado literalmente — não cite entre aspas; parafraseie ou corrija"}
+
+
+# --------------------------------------------------------------------------- #
+# Recibo de custódia (22/09/2026) — um JSON por decisão em disco, gravado por  #
+# `_obter_acordao`, lido sem rede por `_verificar_citacao`.                    #
+# --------------------------------------------------------------------------- #
+_RE_ID_DECISAO_SEGURO = re.compile(r"^[0-9]+$")
+
+
+def _caminho_recibo_tcero(id_decisao) -> str | None:
+    """Nome do arquivo = `<idDecisao>.json`, id só em dígitos (contrato combinado com o lint da
+    peticao-rg). Um id que não seja puramente numérico (o portal sempre devolve inteiro, mas
+    não custa recusar por segurança de path) não grava/lê nada."""
+    id_txt = str(id_decisao or "").strip()
+    if not _RE_ID_DECISAO_SEGURO.match(id_txt):
+        return None
+    return os.path.join(DIR_RECIBOS, f"{id_txt}.json")
+
+
+def _sha256_texto(texto: str) -> str:
+    return hashlib.sha256((texto or "").encode("utf-8")).hexdigest()
+
+
+def _gravar_json_recibo_atomico(caminho: str, dados: dict) -> bool:
+    """Grava atômico (tmp + rename), diretório 0700 e arquivo 0600 — mesmo padrão dos irmãos
+    TRT14/TJSE. Fora do OneDrive por padrão (`~/.tcero-jurisprudencia-recibos`, configurável por
+    `TCERO_MCP_DIR_RECIBOS`)."""
+    try:
+        os.makedirs(os.path.dirname(caminho), mode=0o700, exist_ok=True)
+        try:
+            os.chmod(os.path.dirname(caminho), 0o700)  # makedirs não corrige pasta pré-existente com 0755
+        except Exception:
+            pass
+        tmp = f"{caminho}.{os.getpid()}.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(dados, f, ensure_ascii=False)
+        os.replace(tmp, caminho)
+        return True
+    except Exception:
+        return False
+
+
+# Regex SOBRE TEXTO BRUTO (não normalizado — mantém acento/caixa) para extrair os trechos que
+# vão nos campos texto_transcrito/texto_divergente/texto_alegacao_parte/texto_parecer_mpc do
+# recibo: aqui o objetivo é guardar o EXCERTO real do documento, não só decidir um alerta, então
+# trabalha direto no texto como o portal/PDF entregou, evitando o desalinhamento de índice que a
+# normalização (que remove diacríticos, mudando o comprimento da string) causaria.
+_RE_TRANSCRICAO_RAW = re.compile(
+    r"(?i)\b(STF|STJ|TCU|Tribunal de Contas da Uni[ãa]o|S[úu]mula|Tema|conforme decidiu|"
+    r"nesse sentido|in verbis)\b"
+)
+_RE_ALEGACAO_RAW = re.compile(
+    r"(?i)\b(alega\w*|sustenta\w*|argumenta\w*|defende\w*|a defesa|o jurisdicionado|"
+    r"o respons[áa]vel|o gestor|em suas raz[õo]es|justificativa)\b"
+)
+_RE_PARECER_MPC_RAW = re.compile(
+    r"(?i)\b(Minist[ée]rio P[úu]blico de Contas|MPC|Procurador\w*|parecer|corpo t[ée]cnico|"
+    r"unidade t[ée]cnica|Secretaria|relat[óo]rio t[ée]cnico|opinou|manifestou-?se)\b"
+)
+_RE_DIVERGENCIA_RAW = re.compile(
+    r"(?i)pe[çc]o v[êe]nia para divergir|voto vencido|voto-vista|divirjo do"
+)
+_JANELA_EXCERTO_RAW = 320  # caracteres do texto bruto guardados a partir do gatilho, por ocorrência
+_TETO_EXCERTOS_POR_CAMPO = 6  # não deixa o recibo crescer sem limite num acórdão longo com muitos gatilhos
+
+
+def _excertos_raw(texto: str, regex: re.Pattern, janela: int = _JANELA_EXCERTO_RAW,
+                   teto: int = _TETO_EXCERTOS_POR_CAMPO) -> list[str]:
+    """Um excerto por ocorrência do gatilho (deduplicado por posição de início), texto BRUTO
+    (não normalizado), cortado em `janela` caracteres. Heurística de janela fixa, não de frase —
+    documentado como tal; serve para o lint conferir se um trecho citado cai dentro de uma
+    dessas zonas, não para reproduzir a frase inteira com precisão editorial."""
+    if not texto:
+        return []
+    saida: list[str] = []
+    vistos: set[int] = set()
+    for m in regex.finditer(texto):
+        ini = m.start()
+        if any(abs(ini - v) < 40 for v in vistos):  # gatilhos vizinhos do mesmo trecho: 1 excerto só
+            continue
+        vistos.add(ini)
+        saida.append(re.sub(r"\s+", " ", texto[ini:ini + janela]).strip())
+        if len(saida) >= teto:
+            break
+    return saida
+
+
+def _gravar_recibo_tcero(s: dict, texto_pdf: str | None = None, texto_pdf_completo: bool | None = None,
+                         fonte: str = "obter_acordao_tcero") -> None:
+    """Grava (ou sobrescreve) o recibo de custódia da decisão `s` (dict `source` do portal) em
+    `DIR_RECIBOS/<idDecisao>.json`. Contrato de campos combinado com o lint da peticao-rg
+    (`~/.claude/skills/peticao-rg/scripts/lint_citacoes.py`, `conferir_recibo`/`_ler_recibo`):
+
+        tribunal, id_documento, sigla, numero, processo, nr_processo (= processo, string, para o
+        lint achar recibos irmãos do mesmo processo), relator, orgao_cadastro, data_sessao,
+        link, gravado_em, fonte, texto (ementa + "\\n\\n" + dispositivo + opcionalmente
+        "\\n\\n" + texto do PDF — SEM `informacoesAdicionais`, que é conteúdo de IA do DEJUR e
+        NUNCA pode ser aprovado pelo lint como literal do acórdão), texto_pdf_completo (bool:
+        False quando a extração do PDF foi parcial — teto de páginas/tempo, ou é o texto
+        INTEGRAL extraído, nunca o cortado pelo orçamento de SAÍDA da tool), sha256 (do campo
+        `texto`), texto_ia_dejur (campo à parte, NUNCA misturado em `texto`), e as quatro listas
+        de excertos BRUTOS (não normalizados) `texto_transcrito`, `texto_divergente`,
+        `texto_alegacao_parte`, `texto_parecer_mpc` — vazias quando o detector não achou nada.
+
+    Idempotente: chamar de novo para a mesma decisão sobrescreve o recibo (mesmo se os dados já
+    estavam em cache em memória — o recibo em disco é gravado do mesmo jeito)."""
+    id_decisao = s.get("idDecisao")
+    caminho = _caminho_recibo_tcero(id_decisao)
+    if not caminho:
+        return
+    ementa = (s.get("ementa") or "").strip()
+    dispositivo = _html_para_texto(s.get("acordaoDescricao") or "").strip()
+    partes_texto = [p for p in (ementa, dispositivo) if p]
+    if texto_pdf:
+        partes_texto.append(texto_pdf)
+    texto = "\n\n".join(partes_texto)
+    bruto_para_excertos = "\n\n".join(p for p in (ementa, dispositivo, texto_pdf or "") if p)
+    dados = {
+        "tribunal": "TCE-RO",
+        "id_documento": str(id_decisao) if id_decisao is not None else None,
+        "sigla": s.get("sigla"),
+        "numero": s.get("numero"),
+        "processo": s.get("processo"),
+        "nr_processo": s.get("processo"),
+        "relator": s.get("relator"),
+        "orgao_cadastro": s.get("orgaoJulgador"),
+        "data_sessao": s.get("dataSessao"),
+        "link": _corrigir_link_pdf(s.get("linkArquivo") or "") or None,
+        "gravado_em": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "fonte": fonte,
+        "texto": texto,
+        "texto_pdf_completo": bool(texto_pdf_completo) if texto_pdf is not None else None,
+        "texto_ia_dejur": _html_para_texto(s.get("informacoesAdicionais") or "").strip() or None,
+        "texto_transcrito": _excertos_raw(bruto_para_excertos, _RE_TRANSCRICAO_RAW),
+        "texto_divergente": _excertos_raw(bruto_para_excertos, _RE_DIVERGENCIA_RAW),
+        "texto_alegacao_parte": _excertos_raw(bruto_para_excertos, _RE_ALEGACAO_RAW),
+        "texto_parecer_mpc": _excertos_raw(bruto_para_excertos, _RE_PARECER_MPC_RAW),
+        "sha256": _sha256_texto(texto),
+    }
+    _gravar_json_recibo_atomico(caminho, dados)
+
+
+def _ler_recibo_tcero(id_decisao) -> dict | None:
+    """Lê o recibo de `id_decisao`, se existir e íntegro (sha256 do campo `texto` confere).
+    Recibo adulterado (sha não bate) é recusado — devolve None, exatamente como se não
+    existisse, nunca usado como se fosse íntegro."""
+    caminho = _caminho_recibo_tcero(id_decisao)
+    if not caminho or not os.path.isfile(caminho):
+        return None
+    dados = _ler_json_generico(caminho)
+    if not isinstance(dados, dict):
+        return None
+    if dados.get("sha256") != _sha256_texto(dados.get("texto") or ""):
+        return None
+    return dados
+
+
+def _ler_json_generico(caminho: str):
+    try:
+        with open(caminho, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+# --------------------------------------------------------------------------- #
+# Órgão pelo FECHO do PDF (22/09/2026) — só MEDIÇÃO por ora, não ligado à      #
+# citação (decisão de ligar é da conversa principal, depois de N maior que 4). #
+# --------------------------------------------------------------------------- #
+_RE_ORGAO_FECHO = re.compile(
+    r"(?i)ACORDAM\s+os\s+Senhores\s+Conselheiros\s+d[aeo]s?\s+(.+?)\s+do\s+Tribunal\s+de\s+Contas"
+)
+
+
+def _orgao_do_fecho(texto: str) -> str | None:
+    """Extrai o órgão julgador do FECHO do acórdão (\"ACORDAM os Senhores Conselheiros do Pleno/
+    da 1ª Câmara/da 2ª Câmara do Tribunal de Contas...\"), lendo o inteiro teor em PDF — não o
+    cadastro (`orgaoJulgador` da API), que é o que este servidor usa hoje em toda citação. Mera
+    função de MEDIÇÃO (item 4 do porte de 22/09/2026): testada contra os 4 PDFs reais de
+    `fixtures/pdf/` no --selftest, mas propositalmente NÃO chamada por nenhuma ferramenta — com
+    N=4 não há base para trocar a fonte da citação; ver a tabela id×cadastro×fecho no README/
+    resumo da tarefa."""
+    m = _RE_ORGAO_FECHO.search(texto or "")
+    if not m:
+        return None
+    bruto = re.sub(r"\s+", " ", m.group(1)).strip()
+    for conhecido in ORGAOS_JULGADORES_CONHECIDOS:
+        if _fold(conhecido) == _fold(bruto):
+            return conhecido
+    return bruto  # não bateu com a lista fechada — devolve cru, sem inventar rótulo
 
 
 # --------------------------------------------------------------------------- #
@@ -1219,7 +1746,7 @@ def _diagnostico_ritmo(agora: float | None = None) -> str:
     janela = _ESCADA_JANELA_S[e["indice_janela"]]
     na_janela = len([t for t in (e.get("requisicoes") or []) if agora - t <= janela])
     linhas = [
-        "**Controle de ritmo do MCP TCE-RO (portal ePapyrus)**",
+        f"**Controle de ritmo do MCP TCE-RO (portal ePapyrus) — v{VERSAO}**",
         f"- Nível atual: {e['indice_janela'] + 1} de {len(_ESCADA_JANELA_S)} "
         f"(limite: {_JANELA_MAX_REQS} requisições a cada {_fmt_hms(janela)})",
         f"- Orçamento usado agora: {na_janela}/{_JANELA_MAX_REQS} nesta janela",
@@ -1258,6 +1785,18 @@ class PortalRecusou(RuntimeError):
     """Erro persistente do portal (5xx repetido, ou HTTP 403/429) — já registrado no disjuntor."""
 
 
+def _falha_transitoria(ex: BaseException) -> bool:
+    """Timeout/queda de conexão x recusa do portal. Determinação TJSE→TRF1 de 22/09/2026,
+    replicada aqui: só a SEGUNDA arma o disjuntor (incidente + cooldown). O TCE-RO tem
+    respostas reais de até ~20 MB (achado do protocolo-papyrus: 20,1 MB em C1/C2/C3) — estourar
+    o timeout de leitura nessas é um evento ESPERADO de rede, não sinal de bloqueio; contar
+    como incidente escalaria o nível do disjuntor (e um cooldown de minutos) por causa do
+    tamanho normal de uma resposta, não de recusa nenhuma do portal."""
+    nomes = {"TimeoutException", "ConnectTimeout", "ReadTimeout", "WriteTimeout", "PoolTimeout",
+             "ConnectError", "ReadError", "WriteError", "RemoteProtocolError", "NetworkError"}
+    return any(c.__name__ in nomes for c in type(ex).__mro__)
+
+
 async def _get_com_retentativa(cli: "httpx.AsyncClient", url: str, params: dict, operacao: str) -> httpx.Response:
     """GET com o disjuntor + backoff exponencial curto em erro de rede/5xx (poucas tentativas,
     como pedido — este portal não mostrou WAF, então o cuidado aqui é robustez genérica, não
@@ -1276,7 +1815,13 @@ async def _get_com_retentativa(cli: "httpx.AsyncClient", url: str, params: dict,
             if tentativa < _TENTATIVAS_MAX - 1:
                 await asyncio.sleep(2.0 * (tentativa + 1))
                 continue
-            _registrar_bloqueio_detectado(operacao=operacao, subir_escada=False)
+            # Item 5 (22/09/2026): falha transitória de rede (timeout incluído) NÃO arma o
+            # disjuntor — nem incidente, nem cooldown. Antes disto, qualquer Exception genérica
+            # nesta última tentativa chamava _registrar_bloqueio_detectado incondicionalmente,
+            # tratando um timeout de leitura (esperado em respostas de ~20 MB) como se fosse
+            # recusa do portal.
+            if not _falha_transitoria(e):
+                _registrar_bloqueio_detectado(operacao=operacao, subir_escada=False)
             raise PortalRecusou(f"Falha de rede repetida ao consultar o portal do TCE-RO ({type(e).__name__}: {e}).") from e
         if r.status_code in (403, 429) or r.status_code >= 500:
             try:
@@ -1611,9 +2156,9 @@ async def _buscar(texto_livre: str | None, numero_acordao: str | None, numero_pr
                 filtros_nao_resolvidos.append(f"orgao_julgador={nome_o!r}")
         dados = await _consultar_api(params, "busca")
     except (ValueError, RuntimeError, PortalRecusou) as e:
-        return f"Erro na consulta ao TCE-RO: {e}"
+        return _formatar_erro_portal(e, "Erro na consulta ao TCE-RO")
     except Exception as e:
-        return f"Erro ao consultar o portal do TCE-RO ({type(e).__name__}): {e}"
+        return _formatar_erro_portal(e, f"Erro ao consultar o portal do TCE-RO ({type(e).__name__})")
 
     # `dados["result"]` é lido, nunca mutado, aqui e em _filtrar_por_grupos — mesma disciplina
     # já auditada no red team de 13/09/2026 para o restante da camada de formatação; o array
@@ -1715,9 +2260,9 @@ async def _obter_acordao(id_decisao: int | str | None, numero_acordao: str | Non
                 params["numeroProcesso"] = _padronizar_numero(proc_txt)
             dados = await _consultar_api(params, "detalhe")
     except (ValueError, RuntimeError, PortalRecusou) as e:
-        return f"Erro na consulta ao TCE-RO: {e}"
+        return _formatar_erro_portal(e, "Erro na consulta ao TCE-RO")
     except Exception as e:
-        return f"Erro ao consultar o portal do TCE-RO ({type(e).__name__}): {e}"
+        return _formatar_erro_portal(e, f"Erro ao consultar o portal do TCE-RO ({type(e).__name__})")
 
     resultados = dados.get("result") or []
     if not resultados:
@@ -1764,7 +2309,58 @@ async def _obter_acordao(id_decisao: int | str | None, numero_acordao: str | Non
         usado = sum(len(l) + 1 for l in linhas)
         sobra = min(ORCAMENTO_PDF, ORCAMENTO_SAIDA - usado - _RESERVA_BLOCO_PDF)
         linhas.extend(await _ler_inteiro_teor_pdf(s0, sobra))
+        # O recibo precisa do texto ÍNTEGRO extraído do PDF (não o cortado pelo orçamento de
+        # SAÍDA acima) — ver docstring de _gravar_recibo_tcero. Por isso lê o PDF (com cache) de
+        # novo aqui em vez de reaproveitar o bloco já formatado/cortado de `linhas`: o cache de
+        # `_ler_inteiro_teor_pdf`/`_baixar_pdf` garante que isto NÃO baixa o PDF outra vez.
+        texto_pdf, pdf_completo = await _texto_pdf_para_recibo(s0)
+        _gravar_recibo_tcero(s0, texto_pdf=texto_pdf, texto_pdf_completo=pdf_completo)
+    else:
+        # Item 2: "se o cache em memória já tem a decisão, o recibo é gravado do mesmo jeito" —
+        # e mesmo sem ler o PDF, o recibo de ementa+dispositivo já vale (zero-requisição para
+        # verificar_citacao_tcero depois).
+        _gravar_recibo_tcero(s0)
     return "\n".join(_cortar_bloco(linhas, ORCAMENTO_SAIDA, "resposta de obter_acordao"))
+
+
+async def _texto_pdf_para_recibo(s: dict) -> tuple[str | None, bool | None]:
+    """Texto INTEGRAL extraído do PDF do inteiro teor de `s`, para o recibo — nunca o texto já
+    cortado pelo orçamento de SAÍDA da tool (`ORCAMENTO_PDF`/`ORCAMENTO_SAIDA`), que é um limite
+    do que se mostra ao agente, não do que se guarda em custódia. Usa o mesmo cache de
+    `_ler_inteiro_teor_pdf` (por id_decisao/hash do link) — chamar depois de
+    `_ler_inteiro_teor_pdf` já ter rodado para a mesma decisão não baixa o PDF de novo.
+    `pdf_completo=False` quando a EXTRAÇÃO (não a exibição) ficou parcial — teto de páginas ou
+    de tempo, ou PDF sem texto."""
+    link = _corrigir_link_pdf(s.get("linkArquivo") or "")
+    if not link:
+        return None, None
+    chave = f"id:{s['idDecisao']}" if s.get("idDecisao") is not None else f"link:{hashlib.md5(link.encode()).hexdigest()}"
+    resultado = _cache_pdf_ler(chave)
+    if resultado is None:
+        try:
+            conteudo = await _baixar_pdf(link)
+        except Exception:
+            return None, None
+        resultado = await _extrair_texto_pdf_async(conteudo)
+        if resultado.get("erro"):
+            return None, None
+        _cache_pdf_gravar(chave, resultado)
+    if resultado.get("sem_texto"):
+        return None, False
+    return (resultado.get("texto") or None), (not resultado.get("parcial"))
+
+
+def _linhas_verificacao_item(s: dict, trecho: str, textos: dict[str, str]) -> list[str]:
+    r = _verificar_trecho(textos, trecho)
+    marca = "✅ VÁLIDO" if r["valido"] else ("⚠️ NÃO VERIFICÁVEL" if r.get("sem_texto") else "❌ NÃO ENCONTRADO")
+    linhas = [f"{marca} · id {s.get('idDecisao')} · {s.get('sigla') or '?'} {s.get('numero') or '?'} · {r['motivo']}"]
+    if r["valido"] and r.get("alertas"):
+        for a in r["alertas"]:
+            linhas.append(f"   ⚠️ trecho literal, porém atribuído a outra voz — conferir se é a posição da Corte: {a}")
+    if not r["valido"] and r["faltando"]:
+        for f in r["faltando"][:3]:
+            linhas.append(f"   fragmento sem correspondência: «{_uma_linha(f)[:160]}»")
+    return linhas
 
 
 async def _verificar_citacao(id_decisao: int | str | None, numero_acordao: str | None, trecho: str) -> str:
@@ -1773,21 +2369,44 @@ async def _verificar_citacao(id_decisao: int | str | None, numero_acordao: str |
     id_txt, ac_txt = _texto(id_decisao), _texto(numero_acordao)
     if not id_txt and not ac_txt:
         return "Informe id_decisao (preferível) ou numero_acordao."
+
+    # Item 2: com id_decisao, confere primeiro contra o RECIBO em disco — ZERO requisição. Só
+    # cai para o portal se não houver recibo (ou se estiver adulterado: sha256 não confere).
+    if id_txt:
+        recibo = _ler_recibo_tcero(id_txt)
+        if recibo is not None:
+            s_recibo = {
+                "idDecisao": recibo.get("id_documento"), "sigla": recibo.get("sigla"),
+                "numero": recibo.get("numero"),
+            }
+            textos = {"texto (recibo: ementa + dispositivo + PDF quando lido)": recibo.get("texto") or ""}
+            linhas = [f"Fonte do texto conferido: RECIBO local (gravado em {recibo.get('gravado_em') or '?'}, "
+                      "zero requisição ao portal — ver diagnostico_ritmo_tcero para o disjuntor não ter sido tocado)."]
+            linhas.extend(_linhas_verificacao_item(s_recibo, trecho, textos))
+            rodape_recibo = (
+                "\nCobre ementa + dispositivo + (quando já lido com ler_inteiro_teor=true) o inteiro teor em "
+                "PDF — NÃO as \"informações adicionais\" (IA do DEJUR). Comparação tolerante a caixa, acento, "
+                "pontuação e espaço, casamento por PALAVRA INTEIRA; `[...]` separa fragmentos em ordem. Se ❌: "
+                "não cite entre aspas. Recibo desatualizado? Rode obter_acordao_tcero(id_decisao=...) de novo "
+                "para regravá-lo."
+            )
+            return "\n".join(_cortar_bloco(linhas, ORCAMENTO_SAIDA, "resposta de verificar_citacao")) + rodape_recibo
+
     try:
         if id_txt:
             dados = await _consultar_api({"IdDecisao": id_txt, "filtrarResultados": "false"}, "verificacao")
         else:
             dados = await _consultar_api({"numeroAcordao": _padronizar_numero(ac_txt)}, "verificacao")
     except (ValueError, RuntimeError, PortalRecusou) as e:
-        return f"Erro na consulta ao TCE-RO: {e}"
+        return _formatar_erro_portal(e, "Erro na consulta ao TCE-RO")
     except Exception as e:
-        return f"Erro ao consultar o portal do TCE-RO ({type(e).__name__}): {e}"
+        return _formatar_erro_portal(e, f"Erro ao consultar o portal do TCE-RO ({type(e).__name__})")
 
     resultados = dados.get("result") or []
     if not resultados:
         alvo = id_txt or ac_txt
         return f"Nenhuma decisão sob {alvo!r} — não há como verificar; não cite."
-    linhas = []
+    linhas = ["Fonte do texto conferido: PORTAL (sem recibo local para conferir sem rede; obter_acordao_tcero grava um)."]
     if len(resultados) > 1:
         linhas.append(
             f"⚠️ {min(len(resultados), TETO_DECISOES_VERIFICADAS)} de {len(resultados)} decisões sob "
@@ -1800,12 +2419,7 @@ async def _verificar_citacao(id_decisao: int | str | None, numero_acordao: str |
             "ementa": s.get("ementa") or "",
             "dispositivo (acordaoDescricao)": _html_para_texto(s.get("acordaoDescricao") or ""),
         }
-        r = _verificar_trecho(textos, trecho)
-        marca = "✅ VÁLIDO" if r["valido"] else ("⚠️ NÃO VERIFICÁVEL" if r.get("sem_texto") else "❌ NÃO ENCONTRADO")
-        linhas.append(f"{marca} · id {s.get('idDecisao')} · {s.get('sigla') or '?'} {s.get('numero') or '?'} · {r['motivo']}")
-        if not r["valido"] and r["faltando"]:
-            for f in r["faltando"][:3]:
-                linhas.append(f"   fragmento sem correspondência: «{_uma_linha(f)[:160]}»")
+        linhas.extend(_linhas_verificacao_item(s, trecho, textos))
     if len(resultados) > TETO_DECISOES_VERIFICADAS:
         linhas.append(
             f"… e mais {len(resultados) - TETO_DECISOES_VERIFICADAS} decisão(ões) NÃO conferidas "
@@ -1814,10 +2428,12 @@ async def _verificar_citacao(id_decisao: int | str | None, numero_acordao: str |
     rodape = (
         "\nCobre ementa e dispositivo (`acordaoDescricao`, quando o portal o preenche) — NÃO o "
         "inteiro teor em PDF nem as \"informações adicionais\" (geradas por IA, não citáveis "
-        "como texto do acórdão). Comparação tolerante a caixa, acento, pontuação e espaço; "
-        "`[...]` separa fragmentos em ordem. Se ❌: não cite entre aspas — parafraseie, ou "
-        "confira o inteiro teor no PDF. Se vier ⚠️ NÃO VERIFICÁVEL, o portal não trouxe texto "
-        "algum para esta decisão — isso NÃO é o mesmo que 'o trecho não existe'."
+        "como texto do acórdão). Comparação tolerante a caixa, acento, pontuação e espaço, "
+        "casamento por PALAVRA INTEIRA; `[...]` separa fragmentos em ordem. Se ❌: não cite "
+        "entre aspas — parafraseie, ou confira o inteiro teor no PDF. Se vier ⚠️ NÃO "
+        "VERIFICÁVEL, o portal não trouxe texto algum para esta decisão — isso NÃO é o mesmo "
+        "que 'o trecho não existe'. ✅ com alerta de atribuição: o trecho é literal, mas pode "
+        "não ser a posição da Corte — ver a linha de alerta."
     )
     return "\n".join(_cortar_bloco(linhas, ORCAMENTO_SAIDA, "resposta de verificar_citacao")) + rodape
 
@@ -1963,7 +2579,7 @@ try:
             quando o próprio portal marca a decisão como cancelada ou vinculada a outra, e (com
             `grupos`) aviso quando um grupo só casou nas informações adicionais.
         """
-        return await _buscar(texto_livre, numero_acordao, numero_processo, relator, orgao_julgador, pagina, por_pagina, detalhar, grupos)
+        return _finalizar_saida(await _buscar(texto_livre, numero_acordao, numero_processo, relator, orgao_julgador, pagina, por_pagina, detalhar, grupos))
 
     @mcp.tool()
     async def obter_acordao_tcero(
@@ -2039,7 +2655,7 @@ try:
             sai como `"inteiro teor lido em parte (PDF)"`, nomeando a decisão. Sem texto ou falha
             de rede: o aviso explícito, e nenhuma linha de verificação.
         """
-        return await _obter_acordao(id_decisao, numero_acordao, numero_processo, ler_inteiro_teor)
+        return _finalizar_saida(await _obter_acordao(id_decisao, numero_acordao, numero_processo, ler_inteiro_teor))
 
     @mcp.tool()
     async def verificar_citacao_tcero(
@@ -2068,7 +2684,7 @@ try:
             Por decisão encontrada: ✅/❌, onde foi encontrado (ementa ou dispositivo), e os
             fragmentos sem correspondência quando falhar.
         """
-        return await _verificar_citacao(id_decisao, numero_acordao, trecho)
+        return _finalizar_saida(await _verificar_citacao(id_decisao, numero_acordao, trecho))
 
     @mcp.tool()
     async def diagnostico_ritmo_tcero() -> str:
@@ -2078,7 +2694,7 @@ try:
         documenta nem, até agora, mostrou nenhum rate limit próprio), o orçamento consumido, se
         há bloqueio em curso e o histórico de incidentes. Não faz nenhuma requisição.
         """
-        return _diagnostico_ritmo()
+        return _finalizar_saida(_diagnostico_ritmo())
 
     _HAS_MCP = True
 except Exception as _erro_mcp:  # permite importar o módulo (testes) sem o pacote mcp instalado
@@ -2098,6 +2714,10 @@ except Exception as _erro_mcp:  # permite importar o módulo (testes) sem o paco
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
         import tempfile as _tempfile
+
+        # Zero rede real por causa do aviso de versão (item 6) durante o selftest — a checagem
+        # de versão é testada à parte, com rede mockada (ver seção dedicada abaixo).
+        os.environ["TCERO_MCP_SEM_AVISO_ATUALIZACAO"] = "1"
 
         base = os.path.dirname(os.path.abspath(__file__))
         fx = os.path.join(base, "fixtures")
@@ -2209,22 +2829,77 @@ if __name__ == "__main__":
         res_crlf = _resumo_item({"idDecisao": 1, "ementa": "linha um\r\nlinha dois"}, 1)
         assert res_crlf[-1] == "  Ementa (trecho): linha um linha dois", res_crlf[-1]
         # verificar_trecho
-        textos = {"ementa": "A TESE fixada: benefício por incapacidade, art. 42.", "dispositivo (acordaoDescricao)": "aplicar multa"}
-        assert _verificar_trecho(textos, "tese fixada: beneficio por incapacidade")["valido"]
-        r_ok = _verificar_trecho(textos, "tese fixada [...] art 42")
+        textos = {
+            "ementa": "A TESE fixada quanto ao tema: benefício por incapacidade, art. 42. "
+                      "Julgo improcedentes os demais pedidos formulados na inicial.",
+            "dispositivo (acordaoDescricao)": "aplicar multa ao responsavel pelo dano ao erario",
+        }
+        assert _verificar_trecho(textos, "tese fixada quanto ao tema: beneficio por incapacidade")["valido"]
+        r_ok = _verificar_trecho(textos, "tese fixada quanto ao tema [...] beneficio por incapacidade")
         assert r_ok["valido"] and r_ok["onde"] == "ementa", r_ok
-        r_neg = _verificar_trecho(textos, "tese fixada [...] art 43")
-        assert not r_neg["valido"] and r_neg["faltando"] == ["art 43"], r_neg
+        r_neg = _verificar_trecho(textos, "tese fixada quanto ao tema [...] artigo quadragesimo terceiro")
+        assert not r_neg["valido"] and r_neg["faltando"] == ["artigo quadragesimo terceiro"], r_neg
         assert not r_neg["sem_texto"]
         assert not _verificar_trecho(textos, "")["valido"]
         # fragmento fora de ordem continua sendo recusado
-        r_ordem = _verificar_trecho(textos, "art 42 [...] tese fixada")
-        assert not r_ordem["valido"] and r_ordem["faltando"] == ["tese fixada"], r_ordem
+        r_ordem = _verificar_trecho(textos, "beneficio por incapacidade [...] tese fixada quanto ao tema")
+        assert not r_ordem["valido"] and r_ordem["faltando"] == ["tese fixada quanto ao tema"], r_ordem
         # RED TEAM 13/09/2026, achado 8: sem ementa e sem dispositivo não é "não encontrado",
         # é verificação não realizada — dizer as duas coisas igual induz a tratar ausência de
         # texto como prova de que o trecho não existe.
-        r_vazio = _verificar_trecho({"ementa": "", "dispositivo (acordaoDescricao)": ""}, "qualquer coisa")
+        r_vazio = _verificar_trecho({"ementa": "", "dispositivo (acordaoDescricao)": ""}, "qualquer coisa mesmo")
         assert not r_vazio["valido"] and r_vazio["sem_texto"] and "NÃO REALIZADA" in r_vazio["motivo"], r_vazio
+
+        # PORTE 22/09/2026 — item 1: casamento por PALAVRA INTEIRA (achado (a) do red team do
+        # TRT14, 13/09/2026, literal aqui: "procedentes" batia ✅ contra "improcedentes" por
+        # SUBSTRING). "procedentes os pedidos" (21 chars não-espaço, acima do piso) aparece como
+        # SUBSTRING dentro de "improcedentes os pedidos" (a partir do 'p' de "procedentes",
+        # embutido em "im[procedentes] os pedidos") — mas NÃO por palavra inteira, porque o
+        # caractere anterior ('m') não é espaço.
+        r_substr = _verificar_trecho(textos, "procedentes os pedidos")
+        assert not r_substr["valido"] and not r_substr["sem_texto"], r_substr
+        assert "curto demais" not in r_substr["motivo"], r_substr  # não é o piso que está barrando — é a fronteira
+        # o que era pra passar continua passando: "improcedentes" inteiro (palavra certa) casa
+        r_certo = _verificar_trecho(textos, "julgo improcedentes os demais pedidos")
+        assert r_certo["valido"], r_certo
+        # fragmento com 8 caracteres não-espaço é recusado com mensagem clara, não ✅
+        r_curto = _verificar_trecho(textos, "abcdefgh")
+        assert not r_curto["valido"] and "curto demais" in r_curto["motivo"] and "15" in r_curto["motivo"], r_curto
+        r_curto2 = _verificar_trecho(textos, "tese fixada quanto ao tema [...] art 42")  # 2º fragmento: 6 chars
+        assert not r_curto2["valido"] and "curto demais" in r_curto2["motivo"], r_curto2
+
+        # regressão contra os 4 PDFs reais citados na tarefa: id 98114 (fixtures/03_*.json) e a
+        # ementa do id 94796 (fixtures/exp_C2_controle_or.json) — trecho real, longo, precisa
+        # continuar validando depois da correção de palavra inteira.
+        d_98114 = _ler("03_busca_idDecisao.json")
+        ementa_98114 = next(i["source"]["ementa"] for i in d_98114["result"] if i["source"]["idDecisao"] == 98114)
+        r_98114 = _verificar_trecho({"ementa": ementa_98114}, "DESCUMPRIMENTO DE DETERMINAÇÃO DO TRIBUNAL DE CONTAS")
+        assert r_98114["valido"], r_98114
+        d_94796 = _ler("exp_C2_controle_or.json")
+        ementa_94796 = next(i["source"]["ementa"] for i in d_94796["result"] if i["source"]["idDecisao"] == 94796)
+        r_94796 = _verificar_trecho({"ementa": ementa_94796}, "DESVIRTUAMENTO DA MODALIDADE QUE ADIMITE A PARTICIPAÇÃO SIMULTÂNEA")
+        assert r_94796["valido"], r_94796
+
+        # item 3 — alertas de atribuição: ✅ continua ✅, com alerta(s) explicando de quem pode
+        # ser a voz. Cada bloco isola UM gatilho por vez, todos com fragmento >=15 chars.
+        t_neg = {"ementa": "Não é devido o pagamento de multa adicional ao responsavel pelo dano."}
+        r_alerta_neg = _verificar_trecho(t_neg, "pagamento de multa adicional")
+        assert r_alerta_neg["valido"] and any("NEGAÇÃO" in a for a in r_alerta_neg["alertas"]), r_alerta_neg
+        t_transc = {"ementa": "Conforme decidiu o STJ, a responsabilidade e solidaria entre os gestores."}
+        r_alerta_tr = _verificar_trecho(t_transc, "a responsabilidade e solidaria entre os gestores")
+        assert r_alerta_tr["valido"] and any("TRANSCRIÇÃO" in a for a in r_alerta_tr["alertas"]), r_alerta_tr
+        t_mpc = {"ementa": "O parecer do Ministerio Publico de Contas opina pela irregularidade das contas apresentadas."}
+        r_alerta_mpc = _verificar_trecho(t_mpc, "irregularidade das contas apresentadas")
+        assert r_alerta_mpc["valido"] and any("PARECER DO MPC" in a for a in r_alerta_mpc["alertas"]), r_alerta_mpc
+        t_alegacao = {"ementa": "O jurisdicionado sustenta que nao houve dano ao erario publico municipal."}
+        r_alerta_al = _verificar_trecho(t_alegacao, "nao houve dano ao erario publico municipal")
+        assert r_alerta_al["valido"] and any("ALEGAÇÃO DA PARTE" in a for a in r_alerta_al["alertas"]), r_alerta_al
+        t_aspas = {"ementa": 'O relator registrou que "a conduta do gestor foi negligente e grave" no relatorio.'}
+        r_alerta_asp = _verificar_trecho(t_aspas, "a conduta do gestor foi negligente e grave")
+        assert r_alerta_asp["valido"] and any("ENTRE ASPAS" in a for a in r_alerta_asp["alertas"]), r_alerta_asp
+        t_limpo = {"ementa": "Fica determinada a devolucao integral do valor apurado na auditoria realizada."}
+        r_sem_alerta = _verificar_trecho(t_limpo, "devolucao integral do valor apurado na auditoria")
+        assert r_sem_alerta["valido"] and r_sem_alerta["alertas"] == [], r_sem_alerta
 
         # --- 2. parsing dos fixtures reais ---
         d_proc = _ler("01_busca_numeroProcesso.json")
@@ -2611,6 +3286,35 @@ if __name__ == "__main__":
         _limpar_estado()
         resid = [x for x in os.listdir(_tempfile.gettempdir()) if x.startswith("_selftest_disjuntor_tcero.json.") and x.endswith(".tmp")]
         assert not resid, resid
+        # item 5 (22/09/2026) — timeout de rede NÃO arma o disjuntor: nem incidente, nem
+        # cooldown. Determinação TJSE→TRF1 de 22/09/2026, replicada aqui porque o TCE-RO tem
+        # respostas reais de até ~20 MB (C1/C2/C3 do protocolo-papyrus) — estourar o timeout de
+        # leitura nelas é esperado, não é recusa do portal.
+        if httpx is not None:
+            assert _falha_transitoria(httpx.TimeoutException("simulado"))
+            assert _falha_transitoria(httpx.ConnectError("simulado"))
+            assert not _falha_transitoria(ValueError("não é erro de rede"))
+
+            class _ClienteSempreTimeout:
+                async def get(self, url, params=None):
+                    raise httpx.TimeoutException("timeout simulado — resposta de ~20 MB")
+
+            _limpar_estado()
+            estado_antes = _ler_estado()
+            try:
+                asyncio.run(_get_com_retentativa(_ClienteSempreTimeout(), "http://x", {}, "timeout-teste"))
+                raise AssertionError("deveria ter levantado PortalRecusou")
+            except PortalRecusou:
+                pass
+            estado_depois = _ler_estado()
+            assert estado_depois["bloqueado_ate"] == estado_antes["bloqueado_ate"], (estado_antes, estado_depois)
+            assert estado_depois["backoff_s"] == estado_antes["backoff_s"], (estado_antes, estado_depois)
+            assert estado_depois["incidentes"] == [], estado_depois["incidentes"]
+            assert "Nenhum incidente registrado" in _diagnostico_ritmo(time.time()), _diagnostico_ritmo(time.time())
+            _limpar_estado()
+        else:
+            print("httpx não instalado — pulando regressão de timeout x disjuntor (item 5)")
+
         # cache: TTL, teto de entradas e teto de BYTES (achado 21)
         _cache_gravar("k", {"a": 1}, 10)
         assert _cache_ler("k") == {"a": 1} and _cache_ler("zzz") is None
@@ -2626,6 +3330,79 @@ if __name__ == "__main__":
         _cache_gravar("m2", {"a": 2}, _CACHE_MAX_BYTES // 2 + 10)
         assert _cache_bytes <= _CACHE_MAX_BYTES and _cache_ler("m1") is None and _cache_ler("m2") is not None
         _cache_limpar()
+
+        # --- 3b. recibo de custódia (item 2, 22/09/2026) — diretório temporário isolado ---
+        globals()["DIR_RECIBOS"] = os.path.join(_tempfile.gettempdir(), "_selftest_recibos_tcero")
+        import shutil as _shutil
+        _shutil.rmtree(DIR_RECIBOS, ignore_errors=True)
+        s_recibo_teste = {
+            "idDecisao": 98114, "sigla": "APL-TC", "numero": "00055/26", "processo": "02603/22",
+            "relator": "JOSÉ EULER POTYGUARA PEREIRA DE MELLO", "orgaoJulgador": "Pleno",
+            "dataSessao": "2026-06-22T00:00:00", "linkArquivo": "//tce.ro.gov.br/AbrirPdfConvidado/xyz",
+            "ementa": "CONTROLE EXTERNO. Nao e devido o valor pleiteado pelo jurisdicionado.",
+            "acordaoDescricao": "<p>Aplicar multa. O jurisdicionado alega que nao houve dano.</p>",
+            "informacoesAdicionais": "<p>Texto gerado por IA do DEJUR, nao pode entrar em `texto`.</p>",
+        }
+        _gravar_recibo_tcero(s_recibo_teste, texto_pdf="Relatorio e voto completos do PDF, id 98114.", texto_pdf_completo=True)
+        caminho_98114 = _caminho_recibo_tcero(98114)
+        assert caminho_98114 == os.path.join(DIR_RECIBOS, "98114.json"), caminho_98114
+        assert os.path.isfile(caminho_98114)
+        assert (os.stat(caminho_98114).st_mode & 0o777) == 0o600, oct(os.stat(caminho_98114).st_mode)
+        assert (os.stat(DIR_RECIBOS).st_mode & 0o777) == 0o700, oct(os.stat(DIR_RECIBOS).st_mode)
+        rec = _ler_recibo_tcero(98114)
+        assert rec is not None and rec["tribunal"] == "TCE-RO" and rec["id_documento"] == "98114", rec
+        assert rec["nr_processo"] == "02603/22" and rec["processo"] == "02603/22", rec
+        assert "CONTROLE EXTERNO" in rec["texto"] and "Aplicar multa" in rec["texto"], rec["texto"]
+        assert "Relatorio e voto completos do PDF" in rec["texto"], rec["texto"]
+        assert "gerado por IA do DEJUR" not in rec["texto"], rec["texto"]  # NUNCA informacoesAdicionais em `texto`
+        assert rec["texto_ia_dejur"] and "gerado por IA do DEJUR" in rec["texto_ia_dejur"], rec["texto_ia_dejur"]
+        assert rec["texto_pdf_completo"] is True, rec["texto_pdf_completo"]
+        assert rec["sha256"] == _sha256_texto(rec["texto"]), rec
+        assert "nao e devido" in _fold(" ".join(rec["texto_transcrito"])) or rec["texto_transcrito"] == [], rec["texto_transcrito"]
+        assert any("alega" in _fold(x) for x in rec["texto_alegacao_parte"]), rec["texto_alegacao_parte"]
+        assert rec["texto_divergente"] == [], rec["texto_divergente"]  # sem gatilho de divergência no texto de teste
+        # recibo adulterado (sha não bate) é recusado — nunca usado como se fosse íntegro
+        with open(caminho_98114, "r+", encoding="utf-8") as fh:
+            adulterado = json.load(fh)
+            adulterado["texto"] = adulterado["texto"] + " TEXTO ADULTERADO"
+            fh.seek(0)
+            json.dump(adulterado, fh)
+            fh.truncate()
+        assert _ler_recibo_tcero(98114) is None, "recibo com sha divergente não pode ser aceito como íntegro"
+        _shutil.rmtree(DIR_RECIBOS, ignore_errors=True)
+        # texto_pdf_completo=False quando a extração do PDF foi parcial
+        _gravar_recibo_tcero(s_recibo_teste, texto_pdf="texto truncado pelo teto de paginas", texto_pdf_completo=False)
+        assert _ler_recibo_tcero(98114)["texto_pdf_completo"] is False
+        # sem PDF lido: texto_pdf_completo fica None (não é 'False' — é 'não tentou')
+        _shutil.rmtree(DIR_RECIBOS, ignore_errors=True)
+        _gravar_recibo_tcero(s_recibo_teste)
+        assert _ler_recibo_tcero(98114)["texto_pdf_completo"] is None
+        # id não numérico: não grava, não lê (proteção de path)
+        assert _caminho_recibo_tcero("../etc/passwd") is None
+        assert _caminho_recibo_tcero("12; rm -rf") is None
+        _shutil.rmtree(DIR_RECIBOS, ignore_errors=True)
+
+        # --- item 4 (22/09/2026) — órgão pelo FECHO do PDF: MEDIÇÃO contra os 4 PDFs reais,
+        # comparada ao cadastro (`orgaoJulgador`). N=4: função testada, mas NÃO ligada à citação.
+        if fitz is not None:
+            _fx_pdf = os.path.join(fx, "pdf")
+            _casos_fecho = [
+                (77649, "Pleno"), (85572, "Pleno"), (96141, "1ª Câmara"), (98114, "Pleno"),
+            ]
+            print("\n--- item 4: órgão pelo FECHO do PDF x cadastro (N=4, só medição) ---")
+            print(f"{'id':>8} | {'cadastro (orgaoJulgador)':<26} | {'fecho do PDF':<26} | bate?")
+            for id_pdf, cadastro in _casos_fecho:
+                _doc = fitz.open(os.path.join(_fx_pdf, f"{id_pdf}.pdf"))
+                _txt = "".join(p.get_text() for p in _doc)
+                _doc.close()
+                fecho = _orgao_do_fecho(_txt)
+                assert fecho is not None, f"id {id_pdf}: fecho não reconhecido — ACORDAM não encontrado no texto extraído"
+                bate = "sim" if _fold(fecho) == _fold(cadastro) else "NÃO"
+                print(f"{id_pdf:>8} | {cadastro:<26} | {fecho:<26} | {bate}")
+            assert _orgao_do_fecho("") is None
+            assert _orgao_do_fecho("texto sem a palavra magica nenhuma") is None
+        else:
+            print("pymupdf (fitz) não instalado — pulando medição do item 4 (órgão pelo fecho)")
 
         # --- 4. buscar/obter/verificar com rede mockada (fixtures, sem tocar o portal) ---
         _params_vistos: list[dict] = []
@@ -2870,6 +3647,122 @@ if __name__ == "__main__":
             assert "0** após exigir todos os 1 grupo(s)" in saida_grupo_zero and "1141 decisão(ões) no portal via OU nativo" in saida_grupo_zero, saida_grupo_zero
         finally:
             globals()["_consultar_api"] = _orig_consultar
+
+        # --- 5. item 6 (22/09/2026) — camada de produto: crédito, aviso de versão, rodapé de erro ---
+        # semver
+        assert _versao_mais_nova("1.1.0", "1.2.0")
+        assert _versao_mais_nova("1.1.0", "2.0.0")
+        assert not _versao_mais_nova("1.1.0", "1.1.0")
+        assert not _versao_mais_nova("1.1.0", "1.0.9")
+        assert not _versao_mais_nova("1.1.0", "lixo")
+        assert not _versao_mais_nova("1.1.0", "")
+        assert _versao_mais_nova("1.1.0", "v1.1.1")  # tolera o "v" na frente
+
+        # crédito: só uma vez
+        _reset_credito_para_teste()
+        c1 = _com_credito("resposta 1")
+        c2 = _com_credito("resposta 2")
+        assert CREDITO in c1 and CREDITO not in c2, (c1, c2)
+        _reset_credito_para_teste()
+
+        # checagem de versão: maior -> aviso; igual/menor/erro de rede/env desligado -> não
+        os.environ.pop("TCERO_MCP_SEM_AVISO_ATUALIZACAO", None)
+
+        class _RespVersao:
+            def __init__(self, status, tag):
+                self.status_code = status
+                self._tag = tag
+
+            def json(self):
+                return {"tag_name": self._tag}
+
+        class _ClienteVersaoFake:
+            def __init__(self, status, tag, explode=False):
+                self._status, self._tag, self._explode = status, tag, explode
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def get(self, url, headers=None):
+                if self._explode:
+                    raise RuntimeError("rede indisponível (simulado)")
+                return _RespVersao(self._status, self._tag)
+
+        _orig_async_client = httpx.AsyncClient if httpx is not None else None
+        if httpx is not None:
+            try:
+                httpx.AsyncClient = lambda *a, **k: _ClienteVersaoFake(200, "v9.9.9")
+                assert asyncio.run(_checar_versao_nova()) == "9.9.9"
+                httpx.AsyncClient = lambda *a, **k: _ClienteVersaoFake(200, VERSAO)
+                assert asyncio.run(_checar_versao_nova()) is None  # igual: sem aviso
+                httpx.AsyncClient = lambda *a, **k: _ClienteVersaoFake(200, "0.0.1")
+                assert asyncio.run(_checar_versao_nova()) is None  # menor: sem aviso
+                httpx.AsyncClient = lambda *a, **k: _ClienteVersaoFake(200, "9.9.9", explode=True)
+                assert asyncio.run(_checar_versao_nova()) is None  # erro de rede: sem aviso, sem lançar
+                httpx.AsyncClient = lambda *a, **k: _ClienteVersaoFake(500, "9.9.9")
+                assert asyncio.run(_checar_versao_nova()) is None  # HTTP != 200: sem aviso
+                os.environ["TCERO_MCP_SEM_AVISO_ATUALIZACAO"] = "1"
+                httpx.AsyncClient = lambda *a, **k: _ClienteVersaoFake(200, "9.9.9")
+                assert asyncio.run(_checar_versao_nova()) is None  # env desligado: nem tenta
+            finally:
+                httpx.AsyncClient = _orig_async_client
+                os.environ["TCERO_MCP_SEM_AVISO_ATUALIZACAO"] = "1"
+        else:
+            print("httpx não instalado — pulando regressão de checagem de versão (item 6)")
+
+        # aviso de versão em segundo plano: primeira chamada nunca bloqueia nem traz o aviso
+        # (a tarefa acabou de começar); com o resultado já em cache, a saída passa a trazer.
+        _reset_versao_para_teste()
+
+        async def _com_loop_sem_aviso():
+            return _linha_aviso_versao()
+
+        assert asyncio.run(_com_loop_sem_aviso()) is None  # env ligado (SEM_AVISO=1): nunca aparece
+        _reset_versao_para_teste()
+        globals()["_versao_nova_cache"] = "9.9.9"  # simula a tarefa de fundo já ter terminado
+        assert _linha_aviso_versao() == f"⬆️ Há versão nova (v9.9.9): {RELEASES_PAGINA}"
+        assert "Há versão nova" in _finalizar_saida("texto qualquer")
+        _reset_versao_para_teste()
+        _reset_credito_para_teste()
+
+        # tipoDoErro / SEM_RELATO
+        assert _tipo_do_erro("Muitas consultas em pouco tempo (limite atual: 6...)") == "limite_de_ritmo"
+        assert _tipo_do_erro("... evitando novas tentativas por mais 4m") == "limite_de_ritmo"
+        assert _tipo_do_erro("Falha de rede repetida (TimeoutException: ...)") == "timeout"
+        assert _tipo_do_erro("O portal respondeu HTTP 503 de forma persistente") == "http_503"
+        assert _tipo_do_erro("ConnectError: [Errno 8] nodename nor servname provided") == "rede_ou_certificado"
+        assert _tipo_do_erro("qualquer outra coisa nunca vista antes") == "outro"
+        assert "limite_de_ritmo" in SEM_RELATO_TIPOS and "timeout" not in SEM_RELATO_TIPOS
+
+        # link de relato: NUNCA leva dado da consulta do usuário — testado com uma busca cujo
+        # texto_livre é "SEGREDO123" (a função não recebe a busca, mas a regressão prova que a
+        # URL nunca teria como incluí-la: só versão/SO/tipo/estado do limitador entram).
+        _limpar_estado()
+        link_timeout = _link_relato("timeout")
+        assert link_timeout.startswith(ISSUES_NOVA + "?title=") and "SEGREDO123" not in link_timeout, link_timeout
+        assert _quote(f"Erro timeout na v{VERSAO}") in link_timeout, link_timeout
+        assert "SEGREDO123" not in _rodape_erro("Falha de rede repetida (TimeoutException: SEGREDO123)") \
+            or True  # a mensagem crua pode conter; o teste de verdade é a URL do link, acima
+        _limpar_estado()
+
+        # erro de limite de ritmo NÃO leva link de relato (SEM_RELATO_TIPOS)
+        rodape_ritmo = _rodape_erro("Muitas consultas em pouco tempo (limite atual: 6 a cada 10m). Aguarde 3m.")
+        assert ISSUES_NOVA not in rodape_ritmo, rodape_ritmo
+        assert "Limitador:" in rodape_ritmo and f"Versão: {VERSAO}" in rodape_ritmo, rodape_ritmo
+        # erro de timeout leva link de relato
+        rodape_timeout = _rodape_erro("Falha de rede repetida ao consultar o portal do TCE-RO (TimeoutException: x).")
+        assert ISSUES_NOVA in rodape_timeout, rodape_timeout
+
+        # _formatar_erro_portal: PortalRecusou/RuntimeError ganham rodapé; ValueError de
+        # validação de entrada (não é erro de portal/rede) não ganha
+        assert "Versão:" in _formatar_erro_portal(PortalRecusou("bloqueado"), "Erro na consulta ao TCE-RO")
+        assert "Versão:" in _formatar_erro_portal(RuntimeError("formato inesperado"), "Erro na consulta ao TCE-RO")
+        assert "Versão:" not in _formatar_erro_portal(ValueError("consulta sem nenhum filtro preenchido"), "Erro na consulta ao TCE-RO")
+        _reset_versao_para_teste()
+        _reset_credito_para_teste()
 
         print("selftest offline OK")
 

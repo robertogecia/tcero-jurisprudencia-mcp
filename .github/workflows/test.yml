@@ -1,0 +1,18 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "mcp[cli]>=1.4.0,<2" "httpx>=0.27" "truststore>=0.9" pymupdf
+      - run: python -m py_compile servidor_tcero.py
+      # Offline, contra os fixtures do repositório: nenhuma requisição ao portal do TCE-RO nem ao GitHub.
+      - run: TCERO_MCP_SEM_AVISO_ATUALIZACAO=1 python servidor_tcero.py --selftest
