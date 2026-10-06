@@ -8,3 +8,5 @@ __pycache__/
 harness/_snapshot/
 harness/_pdfs/
 harness/_log_rede.json
+harness/rotulagem-*/
+*.bak-*
