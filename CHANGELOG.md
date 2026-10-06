@@ -1,5 +1,12 @@
 # Changelog — servidor_tcero.py
 
+## 1.4.0 — 06/10/2026
+
+- `verificar_citacao_tcero` ganha a POSIÇÃO NO JULGADO: ementa do cadastro, autuação e cabeçalho de página do PDF, ementa (com as seções do TCE-RO: Contexto fático, Questão técnica e/ou jurídica, Entendimento, Fundamento), ACÓRDÃO, relatório, voto ou proposta de decisão do relator, dispositivo e voto de outro conselheiro (pelo nome no título, comparado com o relator da autuação). Medido às cegas: **88% numa validação de 62 trechos novos** (97% na amostra de ajuste).
+- NEGAÇÃO mais estreita: só avisa com a negação até 6 palavras antes do trecho; não avisa quando ela nega um particípio ("não utilizado pelo…") ou recusa uma alternativa ("…, e não sobre…"); "não é outro o entendimento", "não se desconhece" e "não se pode deixar de" afirmam. Gabarito cego e duplo: ajuste em 617 trechos já rotulados (TJSE, STJ, TRT14, OAB, TCE-RO), validação em 120 trechos NOVOS de cinco tribunais (concordância 114/120, 6 adjudicados): precisão 38% → 44%, falso alarme 42% → 31%, cobertura 100% → 98%. Continua o alerta mais fraco do bloco: é aviso para ler a frase, não veredito.
+- OBITER DICTUM? reconhece também "registre-se, por oportuno", "a título de registro" e "apenas para registro" (6 de 6 obiter às cegas). Outras marcas testadas ficaram de fora por imprecisas: "de passagem" 67%, "por cautela" 25%, "ainda que se entenda/admita" 30%.
+- Extensão `tcero-jurisprudencia-mcpb` 1.4.0 com o mesmo localizador (módulo `posicao2.js`, idêntico nas extensões do TRT14, TRF1 e OAB); paridade das posições Python×Node: 40.263 casos, 0 diferentes.
+
 ## 1.3.0 — 06/10/2026
 
 - `verificar_citacao_tcero`: NEGAÇÃO por ALCANCE (operador de negação ou rejeição sem quebra de oração até o trecho,
