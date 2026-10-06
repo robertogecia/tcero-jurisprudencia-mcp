@@ -11,6 +11,10 @@
   estrato: **NEGAÇÃO 88% de precisão e 75% de cobertura, contra 31% e 72% da regra antiga** (que avisava em toda negação nos
   80 caracteres anteriores: 34% de falso alarme); OBITER 5 de 5 disparos corretos. ENTRE ASPAS sem caso positivo na amostra:
   os acórdãos de contas medidos só têm aspas curtas, que não contam.
+- ENTRE ASPAS medido depois, no mesmo dia, sem mudar a regra: 23 acórdãos novos escolhidos por temas que transcrevem texto
+  entre aspas (`harness/baixar_aspas.py`, um pedido por vez, 15 s entre pedidos) e 85 trechos rotulados às cegas por dois
+  rotuladores (concordância 84/85, uma divergência adjudicada no texto), ponderado por estrato: **precisão 94%, cobertura 100%,
+  falso alarme 0%, contra 16%, 45% e 14% da regra antiga**.
 - Extensão `tcero-jurisprudencia-mcpb` 1.3.0 com as mesmas regras; a paridade passou a comparar com o servidor ATUAL. As duas
   diferenças que ela acusa (texto do PDF e `texto_parecer_mpc`) já existiam e vêm da extração de PDF (PyMuPDF × pdfjs).
 

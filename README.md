@@ -432,6 +432,10 @@ disparou nenhuma vez nesta amostra — os PDFs reais usam pouca aspa tipográfic
 pelo padrão par/ímpar; N pequeno (4 PDFs), não conclusivo sobre a sensibilidade desse alerta
 especificamente.
 
+**Atualização 06/10/2026 (v1.3.0):** com aspas por pareamento no documento inteiro, ENTRE ASPAS foi medido às cegas em 85
+trechos de 23 acórdãos que transcrevem texto entre aspas (dois rotuladores, concordância 84/85): precisão 94%, cobertura 100%,
+falso alarme 0% — a regra antiga, na mesma amostra, tinha 16%, 45% e 14%. Detalhes no `CHANGELOG.md`.
+
 ## Órgão pelo fecho do PDF — só medição, não ligado (22/09/2026)
 
 No TJRO o cadastro errava a câmara em 15/24 processos; no TRT14 acertou 5/5; no TJSE divergia
