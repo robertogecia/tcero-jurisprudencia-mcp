@@ -1,5 +1,19 @@
 # Changelog — servidor_tcero.py
 
+## 1.3.0 — 06/10/2026
+
+- `verificar_citacao_tcero`: NEGAÇÃO por ALCANCE (operador de negação ou rejeição sem quebra de oração até o trecho,
+  alcançando 3+ palavras dele; "não há dúvida", "não obstante" e "ainda que assim não fosse" não negam; "sem razão" nega),
+  ENTRE ASPAS por PAREAMENTO das aspas no documento inteiro, e o alerta novo OBITER DICTUM? ("ainda que assim não fosse",
+  "a título de argumentação") — o bloco de regras do TJRO v1.13/1.16, o mesmo de STJ, TRT14, TJSE, TRF1 e OAB. TRANSCRIÇÃO,
+  PARECER DO MPC/CORPO TÉCNICO e ALEGAÇÃO DA PARTE continuam os do TCE-RO. Sem o texto bruto, valem as regras antigas.
+- Medido às cegas sobre 13 acórdãos baixados em 06/10/2026 (85 trechos, dois rotuladores, kappa 0,82-1,00), ponderado por
+  estrato: **NEGAÇÃO 88% de precisão e 75% de cobertura, contra 31% e 72% da regra antiga** (que avisava em toda negação nos
+  80 caracteres anteriores: 34% de falso alarme); OBITER 5 de 5 disparos corretos. ENTRE ASPAS sem caso positivo na amostra:
+  os acórdãos de contas medidos só têm aspas curtas, que não contam.
+- Extensão `tcero-jurisprudencia-mcpb` 1.3.0 com as mesmas regras; a paridade passou a comparar com o servidor ATUAL. As duas
+  diferenças que ela acusa (texto do PDF e `texto_parecer_mpc`) já existiam e vêm da extração de PDF (PyMuPDF × pdfjs).
+
 ## 1.2.0 — 22/09/2026
 
 - `buscar_jurisprudencia_tcero`: novo parâmetro `ordenar` (`"relevancia"`, **padrão**, offline —
