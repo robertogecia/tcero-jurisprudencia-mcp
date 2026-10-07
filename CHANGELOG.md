@@ -1,5 +1,10 @@
 # Changelog — servidor_tcero.py
 
+## Extensão 1.5.1 — 07/10/2026
+
+- Aviso de versão nova com link DIRETO do arquivo .mcpb e a instrução "dê dois cliques no arquivo baixado e reinicie o Claude Desktop" (antes, só o link da página de versões; o texto em itálico terminava colado ao link e podia quebrá-lo).
+- NEGAÇÃO, segunda validação cega (120 trechos de documentos inéditos, 102/120 concordes, 18 adjudicados): o alerta forte acertou 63% (na primeira, 80%) e 13% das negações reais ficaram sem aviso (na primeira, 28%) — a variação entre amostras é grande, por isso vão os dois números. Testado e REJEITADO baixar o alcance mínimo de 3 para 1 palavra: os casos novos são quase todos fragmentos de ementa ("NÃO [COMPROVADA. …]") e a perda de precisão não compensa (sem aviso 13% → 10%, forte 63% → 59%).
+
 ## 1.5.1 — 07/10/2026
 
 - Correção: o servidor Python não abria no Python 3.10 e 3.11 (SyntaxError: barra invertida dentro da expressão de uma f-string, no texto do alerta de POSIÇÃO — só o Python 3.12+ aceita). Afetava as versões publicadas desde 06/10/2026; o CI do GitHub acusava. A extensão .mcpb (Node) não tinha o defeito.
