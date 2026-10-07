@@ -1,5 +1,9 @@
 # Changelog — servidor_tcero.py
 
+## 1.5.1 — 07/10/2026
+
+- Correção: o servidor Python não abria no Python 3.10 e 3.11 (SyntaxError: barra invertida dentro da expressão de uma f-string, no texto do alerta de POSIÇÃO — só o Python 3.12+ aceita). Afetava as versões publicadas desde 06/10/2026; o CI do GitHub acusava. A extensão .mcpb (Node) não tinha o defeito.
+
 ## 1.5.0 — 07/10/2026
 
 - NEGAÇÃO em dois níveis. Continua "NEGAÇÃO:" quando a negação está colada ao trecho (até uma palavra antes) ou é existencial ("não há/houve/existe …", até cinco palavras). O resto que a regra anterior pegava sai como "NEGAÇÃO (distante)?", dizendo que em geral ela fecha a própria oração e não inverte o recorte. Gabarito cego e duplo em 120 trechos NOVOS de cinco tribunais (TJRO, TJSE, STJ, TCE-RO e TED-OAB; concordância 108/120, 12 adjudicados pela definição escrita), ponderado pela população: o alerta forte acerta 80% (falso alarme 6%); a regra anterior, sozinha, acertava 50% (falso alarme 33%) nesta amostra. Somados, os dois níveis avisam nos mesmos 72% das negações reais; o forte sozinho pega 53%.
