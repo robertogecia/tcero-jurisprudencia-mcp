@@ -1,5 +1,10 @@
 # Changelog — servidor_tcero.py
 
+## 1.5.0 — 07/10/2026
+
+- NEGAÇÃO em dois níveis. Continua "NEGAÇÃO:" quando a negação está colada ao trecho (até uma palavra antes) ou é existencial ("não há/houve/existe …", até cinco palavras). O resto que a regra anterior pegava sai como "NEGAÇÃO (distante)?", dizendo que em geral ela fecha a própria oração e não inverte o recorte. Gabarito cego e duplo em 120 trechos NOVOS de cinco tribunais (TJRO, TJSE, STJ, TCE-RO e TED-OAB; concordância 108/120, 12 adjudicados pela definição escrita), ponderado pela população: o alerta forte acerta 80% (falso alarme 6%); a regra anterior, sozinha, acertava 50% (falso alarme 33%) nesta amostra. Somados, os dois níveis avisam nos mesmos 72% das negações reais; o forte sozinho pega 53%.
+- Paridade Python×Node (`test/paridade.py` da extensão): as duas diferenças antigas passam a ser classificadas pela causa, sem divergência real. (1) No PDF grande, o PyMuPDF devolve mais espaço em branco que o pdf.js, então o orçamento de caracteres acaba em pontos diferentes e o miolo omitido — sempre dito na saída — começa em lugar diferente; o começo é idêntico depois de normalizar espaço. (2) Os excertos do parecer do MPC usam janela em caracteres brutos: com mais espaço, cabe uma palavra a menos. Igualar exigiria normalizar o texto do PDF, o que mudaria o hash dos recibos novos e o texto em que a POSIÇÃO foi medida — decisão: registrar, não mexer.
+
 ## 1.4.0 — 06/10/2026
 
 - `verificar_citacao_tcero` ganha a POSIÇÃO NO JULGADO: ementa do cadastro, autuação e cabeçalho de página do PDF, ementa (com as seções do TCE-RO: Contexto fático, Questão técnica e/ou jurídica, Entendimento, Fundamento), ACÓRDÃO, relatório, voto ou proposta de decisão do relator, dispositivo e voto de outro conselheiro (pelo nome no título, comparado com o relator da autuação). Medido às cegas: **88% numa validação de 62 trechos novos** (97% na amostra de ajuste).
