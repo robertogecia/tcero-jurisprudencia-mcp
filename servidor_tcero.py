@@ -3368,10 +3368,16 @@ _RE_NUM_LONGO_ERRO = re.compile(r"\b\d{5,}\b")
 _RE_EMAIL_ERRO = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 
 
+_RE_SEGREDO_ROTULO_ERRO = re.compile(r"(?i)\b(bearer|token|authorization|api[_-]?key|senha|password)\b[\s:=]+\S+")
+_RE_SEGREDO_TOKEN_ERRO = re.compile(r"\b(?:ghp|gho|ghs|github_pat|sk|xox[bp])[-_][A-Za-z0-9_-]{10,}")
+_RE_DOC_ERRO = re.compile(r"\b\d[\d.\-/]{6,}\d\b")  # CNJ, CPF, CNPJ (e datas: preço aceito)
+_RE_ENUM_ERRO = re.compile(r"[a-z_]{1,20}")
+
+
 def _url_para_erro(m) -> str:
     """URL sem consulta nem fragmento e sem segmento longo de caminho (o hash de AbrirPdfConvidado
     identifica o acórdão que o usuário estava lendo)."""
-    u = m.group(0).split("?")[0].split("#")[0]
+    u = re.sub(r"^(https?://)[^/@\s]*@", r"\1", m.group(0).split("?")[0].split("#")[0])
     partes = u.split("/")
     return "/".join(("<id>" if i >= 3 and len(p) >= 16 else p) for i, p in enumerate(partes))
 
@@ -3381,9 +3387,12 @@ def _sanitizar_erro(texto, maximo: int = 300) -> str:
     número de processo/acórdão (NNNNN/AA), ids longos e e-mails somem. O texto da busca do usuário nunca
     é argumento desta função (quem registra passa só a mensagem do erro)."""
     t = str(texto if texto is not None else "")
+    t = _RE_SEGREDO_ROTULO_ERRO.sub(lambda m: m.group(1) + " <segredo>", t)
+    t = _RE_SEGREDO_TOKEN_ERRO.sub("<segredo>", t)
     t = _RE_URL_ERRO.sub(_url_para_erro, t)
     t = _RE_ASPAS_ERRO.sub("«…»", t)
     t = _RE_EMAIL_ERRO.sub("<email>", t)
+    t = _RE_DOC_ERRO.sub("<nº>", t)
     t = _RE_NUM_BARRA_ERRO.sub("<nº>", t)
     t = _RE_NUM_LONGO_ERRO.sub("<nº>", t)
     return _RE_ESPACOS_PY.sub(" ", t).strip()[:maximo]
@@ -3402,7 +3411,7 @@ def _descrever_args(args: dict | None) -> dict:
         if k in _ARGS_SEGUROS_ERRO and isinstance(v, (bool, int, float)):
             out[k] = v
         elif k in _ARGS_SEGUROS_ERRO and isinstance(v, str):
-            out[k] = _sanitizar_erro(v, 30)
+            out[k] = v if _RE_ENUM_ERRO.fullmatch(v) else f"<texto: {len(v)} car.>"
         elif isinstance(v, list):
             out[k] = (f"{len(v)} grupo(s), {sum(len(g) for g in v if isinstance(g, list))} termo(s)"
                       if isinstance(v[0], list) else f"{len(v)} item(ns)")
@@ -3639,7 +3648,7 @@ def _resumir_erros(entradas: list[dict], dias: int = 30, relatorio: bool = False
     if relatorio:
         ult = entradas[-20:]
         out.append("")
-        out.append("**Relatório técnico para análise** (sem texto de busca, sem nomes e sem número de processo; pode ser colado em issue pública)")
+        out.append("**Relatório técnico para análise** (sem texto de busca, números, segredos, URLs e trechos entre aspas mascarados; nomes soltos na mensagem não são detectados, confira antes de colar em issue pública)")
         out.append(f"- Versão: {VERSAO} · Sistema: {platform.system()} {platform.release()} · Python {platform.python_version()}")
         out.append(f"- Registros: {len(entradas)} (últimos {len(ult)} abaixo)")
         out.append("")
