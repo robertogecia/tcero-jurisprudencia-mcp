@@ -1812,7 +1812,8 @@ def _verificar_trecho(textos: dict[str, str], trecho: str) -> dict:
                 "valido": True, "onde": nome, "faltando": [], "sem_texto": False,
                 "motivo": f"trecho encontrado literalmente em: {nome}",
                 # `alertas` só tem o que PEDE cautela (contrato da v1.6.0: [] = nada a avisar); VOZ DA CASA é o contrário, vai em `notas`
-                "alertas": alertas, "notas": [voz] if voz else [], "posicao": posicao, "pagina": pagina,
+                # e CALA quando há qualquer alerta de atribuição (parecer do MPC, alegação, transcrição…): as duas notas se contradiriam
+                "alertas": alertas, "notas": [voz] if (voz and not alertas) else [], "posicao": posicao, "pagina": pagina,
             }
         faltando_por_texto[nome] = faltando
     if not houve_texto:
@@ -4563,7 +4564,10 @@ def _placar_consultas(agora: float | None = None) -> str:
 _RE_CABECA_RESULTADO = re.compile(r"^\n(?:\*\*\d+\. |### )")
 
 
-def _cortar_bloco_por_resultado(linhas: list[str], teto: int, rotulo: str) -> list[str]:
+_RE_CABECA_CITACAO = re.compile(r"^[0-9]+\. [^\n]* · id ")   # a saída é partida em "\n", então a linha em branco antes do resultado é uma linha à parte
+
+
+def _cortar_bloco_por_resultado(linhas: list[str], teto: int, rotulo: str, cabeca: re.Pattern = _RE_CABECA_RESULTADO) -> list[str]:
     """`_cortar_bloco` (teto de 60 mil caracteres, em fronteira de linha, dizendo que cortou) + recuo até o começo do resultado
     que ficou pela metade: a busca nunca entrega uma decisão truncada no meio de uma linha de metadados."""
     saida = _cortar_bloco(linhas, teto, rotulo)
@@ -4571,16 +4575,16 @@ def _cortar_bloco_por_resultado(linhas: list[str], teto: int, rotulo: str) -> li
         return saida
     aviso = saida[-1]
     corpo = saida[:-1]
-    j = max((i for i, l in enumerate(corpo) if _RE_CABECA_RESULTADO.match(l)), default=-1)
+    j = max((i for i, l in enumerate(corpo) if cabeca.match(l)), default=-1)
     if j > 0:
-        mostrados = sum(1 for l in corpo[:j] if _RE_CABECA_RESULTADO.match(l))
+        mostrados = sum(1 for l in corpo[:j] if cabeca.match(l))
         corpo = corpo[:j]
         aviso += f" Cortei na fronteira do resultado: {mostrados} resultado(s) inteiro(s) acima; o seguinte ficou de fora (use por_pagina menor ou a página seguinte)."
     return corpo + [aviso]
 
 
 # ---- item 3: julgados_que_citam_tcero ---- #
-_RE_NUMERO_CITADO = re.compile(r"^\s*0*(\d{1,5})\s*/\s*(\d{2})\s*$")
+_RE_NUMERO_CITADO = re.compile(r"^[ \t\n\r\f\v]*0*([0-9]{1,5})[ \t\n\r\f\v]*/[ \t\n\r\f\v]*([0-9]{2})[ \t\n\r\f\v]*$")
 _JANELA_ANTES, _JANELA_DEPOIS, _JANELAS_MAX = 350, 250, 3
 
 
@@ -4596,7 +4600,7 @@ def _numero_citado(v: str) -> tuple[str, str, str] | None:
 def _regex_numero_citado(n: str, aa: str) -> re.Pattern:
     """Ocorrência do número no TEXTO de outro julgado, com ou sem zeros à esquerda; recusa dígito colado antes ("100037/23"), ano de 4
     dígitos e data ("15/10/23" não é o nº 15/10); "01136/22/TCE-RO" (processo seguido de órgão) vale."""
-    return re.compile(rf"(?<![\d/])0*{re.escape(n)}\s?/\s?{re.escape(aa)}(?!\d|/\d)")
+    return re.compile(rf"(?<![0-9/])0*{re.escape(n)}\s?/\s?{re.escape(aa)}(?![0-9]|/[0-9])")
 
 
 def _janelas_de_citacao_tcero(texto: str, n: str, aa: str, antes: int = _JANELA_ANTES, depois: int = _JANELA_DEPOIS,
@@ -4615,17 +4619,24 @@ def _janelas_de_citacao_tcero(texto: str, n: str, aa: str, antes: int = _JANELA_
     return out
 
 
-def _eh_o_proprio(s: dict, forma: str) -> bool:
-    return forma in (_padronizar_numero(_texto(s.get("numero"))), _padronizar_numero(_texto(s.get("processo"))))
+def _eh_o_proprio(s: dict, forma: str, sigla: str | None = None) -> bool:
+    """Mesmo número de PROCESSO (sem sigla) ou de ACÓRDÃO. Quando a sigla do alvo e a da decisão são conhecidas, o número de acórdão só
+    vale se a sigla também bater: "00037/23" de outro órgão (AC1-TC x APL-TC) é outra decisão, não o próprio julgado."""
+    if forma == _padronizar_numero(_texto(s.get("processo"))):
+        return True
+    if forma != _padronizar_numero(_texto(s.get("numero"))):
+        return False
+    a, b = _texto(sigla).upper(), _texto(s.get("sigla")).upper()
+    return not (a and b and a != b)
 
 
-def _citacoes_no_portal(itens: list[dict], forma: str, n: str, aa: str) -> tuple[list[dict], int, int]:
+def _citacoes_no_portal(itens: list[dict], forma: str, n: str, aa: str, sigla: str | None = None) -> tuple[list[dict], int, int]:
     """Das decisões que o portal devolveu para a frase, só as que TRAZEM o número no texto de ementa, dispositivo ou informações adicionais
     (o portal casa por OU quando não honra a frase; o filtro local é o que impede de listar a base inteira). (achados, próprias, sem o número)."""
     achados, proprias, sem_numero = [], 0, 0
     for it in itens:
         s = it.get("source") or {}
-        if _eh_o_proprio(s, forma):
+        if _eh_o_proprio(s, forma, sigla):
             proprias += 1
             continue
         campos = (("ementa", _ementa_limpa(s)),
@@ -4639,13 +4650,13 @@ def _citacoes_no_portal(itens: list[dict], forma: str, n: str, aa: str) -> tuple
     return achados, proprias, sem_numero
 
 
-def _citacoes_nos_recibos(forma: str, n: str, aa: str, pasta: str | None = None) -> list[dict]:
+def _citacoes_nos_recibos(forma: str, n: str, aa: str, pasta: str | None = None, sigla: str | None = None) -> list[dict]:
     """Mesma busca, SEM REDE, no texto gravado dos recibos (ementa + dispositivo + PDF quando lido)."""
     lista, _ign = _listar_recibos_tcero(pasta)
     out = []
     for it in lista:
         r = it["r"]
-        if _eh_o_proprio({"numero": r.get("numero"), "processo": r.get("processo")}, forma):
+        if _eh_o_proprio({"numero": r.get("numero"), "processo": r.get("processo"), "sigla": r.get("sigla")}, forma, sigla):
             continue
         texto = r.get("texto") or ""
         jan = []
@@ -4685,6 +4696,13 @@ def _formatar_citacoes(forma: str, portal: list[dict] | None, recibos: list[dict
     else:
         out.append(f"Portal: frase \"{forma}\" no textoLivre devolveu {_num(info.get('total_portal', 0))} decisão(ões); "
                    f"{_num(info.get('sem_numero', 0))} sem o número no texto (descartadas) e {_num(info.get('proprias', 0))} do próprio julgado (descartadas).")
+    # avisos FIXOS antes da lista: se o teto cortar, o que se perde é resultado, nunca o aviso de que zero/recall/superação não provam nada
+    if not hits:
+        out.append("Nenhum julgado achado. ZERO AQUI NÃO PROVA que ninguém aplicou o julgado: o portal indexa texto (ementa, dispositivo e informações "
+                   "adicionais) e o PDF do inteiro teor NÃO é varrido; o recall é baixo.")
+    out.append("_Leitura assistida, não confirmação. NÃO detecta superação nem distinção: leia a janela e confira o julgado que cita antes de afirmar "
+               "que ele segue o precedente. O recall é baixo: o portal indexa texto e o PDF do inteiro teor NÃO é varrido; citação sem a forma NNNNN/AA "
+               "(por extenso, só o ano, só a sigla) não é achada. Os recibos locais cobrem só o que esta máquina já leu._")
     for i, h in enumerate(hits[:max(1, int(limite))], 1):
         s = h["s"]
         src = " + ".join(sorted({"portal" if "portal" in h["fontes"] else "", "recibo local" if "recibo" in h["fontes"] else ""} - {""}))
@@ -4695,12 +4713,6 @@ def _formatar_citacoes(forma: str, portal: list[dict] | None, recibos: list[dict
             out.append(f"   [{nome}] > {_neutralizar_markdown(w)[:620]}")
     if len(hits) > limite:
         out.append(f"\n… e mais {len(hits) - limite} achado(s) além do limite pedido ({limite}).")
-    if not hits:
-        out.append("Nenhum julgado achado. ZERO AQUI NÃO PROVA que ninguém aplicou o julgado: o portal indexa texto (ementa, dispositivo e informações "
-                   "adicionais) e o PDF do inteiro teor NÃO é varrido; o recall é baixo.")
-    out.append("\n_Leitura assistida, não confirmação. NÃO detecta superação nem distinção: leia a janela e confira o julgado que cita antes de afirmar "
-               "que ele segue o precedente. O recall é baixo: o portal indexa texto e o PDF do inteiro teor NÃO é varrido; citação sem a forma NNNNN/AA "
-               "(por extenso, só o ano, só a sigla) não é achada. Os recibos locais cobrem só o que esta máquina já leu._")
     return "\n".join(out)
 
 
@@ -4722,7 +4734,15 @@ async def _julgados_que_citam(numero: str, limite: int = 10) -> str:
     except Exception as e:
         info["erro"] = f"{type(e).__name__}: {_uma_linha(str(e))[:200]}"
     recibos = _citacoes_nos_recibos(forma, n, aa)
-    return "\n".join(_cortar_bloco(_formatar_citacoes(forma, portal, recibos, limite, info).split("\n"), ORCAMENTO_SAIDA, "julgados_que_citam_tcero"))
+    linhas = _formatar_citacoes(forma, portal, recibos, limite, info).split("\n")
+    # a linha "… e mais N" sai antes do corte e volta depois dele: o corte é em fronteira de resultado inteiro, e o "e mais" nunca se perde
+    mais = [l for l in linhas if l.startswith("… e mais ")]
+    corpo = [l for l in linhas if not l.startswith("… e mais ")]
+    saida = _cortar_bloco_por_resultado(corpo, ORCAMENTO_SAIDA, "julgados_que_citam_tcero", _RE_CABECA_CITACAO) + mais
+    placar = _placar_consultas()   # a ferramenta faz UMA consulta ao portal: o placar diz onde está o limitador
+    if placar:
+        saida.append(placar)
+    return "\n".join(saida)
 
 
 # --------------------------------------------------------------------------- #
@@ -6830,6 +6850,13 @@ if __name__ == "__main__":
             assert "palavra do próprio TCE-RO" in _r_casa["notas"][0] and not any(a.startswith("VOZ DA CASA") for a in _r_casa["alertas"])
             _r_voto = _verificar_trecho({"texto (recibo)": _bruto98}, "abstenham-se de prorrogar os contratos decorrentes do Pregão Eletrônico")
             assert _r_voto["valido"] and _r_voto["notas"] == [], _r_voto
+            # v1.7.1: com QUALQUER alerta de atribuição a VOZ DA CASA se cala (as duas notas se contradiriam)
+            for _em, _tr, _pref in (
+                ('O Ministério Público de Contas opinou que "as contas devem ser julgadas irregulares por dano" ao erário.', "as contas devem ser julgadas irregulares por dano", "PARECER"),
+                ("A recorrente alega que a multa é desproporcional ao dano apurado nos autos.", "a multa é desproporcional ao dano apurado nos autos", "ALEGAÇÃO"),
+                ("Conforme decidiu o STJ, a prescrição intercorrente não se aplica às contas especiais.", "a prescrição intercorrente não se aplica às contas especiais", "TRANSCRIÇÃO")):
+                _rv = _verificar_trecho({"ementa": _em}, _tr)
+                assert _rv["valido"] and _rv["alertas"] and _rv["notas"] == [], (_em, _rv)
             _r_por = _verificar_trecho({"ementa": "Contas regulares com ressalvas, nos termos do voto do relator, determinando o arquivamento.", "dispositivo (acordaoDescricao)": ""},
                                        "Contas regulares com ressalvas, nos termos do voto do relator")
             assert _r_por["notas"] and _r_por["notas"][0].startswith("VOZ DA CASA: o trecho está em ementa"), _r_por
@@ -6909,6 +6936,34 @@ if __name__ == "__main__":
             # formato inválido: nenhuma requisição
             globals()["_consultar_api"] = (lambda *a, **k: (_ for _ in ()).throw(AssertionError("sem rede")))
             assert "Nenhuma requisição foi feita" in asyncio.run(_julgados_que_citam("37 de 2023", 10))
+            # v1.7.1 item 1: avisos ANTES da lista, corte em resultado inteiro, "e mais N" preservado, placar presente
+            _gordo = {"result": [{"source": {"idDecisao": 700 + k, "sigla": "AC1-TC", "numero": f"{k + 1:05d}/25", "processo": f"{k + 500:05d}/24", "relator": "R", "orgaoJulgador": "1ª Câmara",
+                                               "dataSessao": f"2025-01-{(k % 28) + 1:02d}T00:00:00", "ementa": ("palavra " * 70) + " Acórdão APL-TC 00037/23 " + ("x " * 100)}} for k in range(120)]}
+            async def _api_gordo(params, operacao):
+                return _gordo
+            globals()["_consultar_api"] = _api_gordo
+            _orc_ant = ORCAMENTO_SAIDA
+            globals()["ORCAMENTO_SAIDA"] = 8_000
+            try:
+                _sg = asyncio.run(_julgados_que_citam("37/23", 50))
+            finally:
+                globals()["ORCAMENTO_SAIDA"] = _orc_ant
+            assert "[SAÍDA CORTADA" in _sg and "Cortei na fronteira do resultado" in _sg, _sg[-600:]
+            assert re.search(r"… e mais \d+ achado\(s\) além do limite pedido \(50\)", _sg) and "\nPlacar: " in _sg, _sg[-600:]
+            _ia_ = {a: _sg.index(a) for a in ("NÃO detecta superação", "Leitura assistida", "PDF do inteiro teor NÃO é varrido", "recall é baixo")}
+            assert max(_ia_.values()) < _sg.index("\n1. AC1-TC"), _ia_
+            _corpo = _sg.split("\n[SAÍDA CORTADA")[0].rstrip().split("\n")
+            assert _corpo[-1].startswith("   [ementa] >"), _corpo[-1][:80]   # terminou num resultado INTEIRO (janela da ementa é a última linha dele)
+            globals()["_consultar_api"] = _api_zero
+            assert asyncio.run(_julgados_que_citam("99999/99", 10)).index("ZERO AQUI NÃO PROVA") < asyncio.run(_julgados_que_citam("99999/99", 10)).index("Leitura assistida")
+            # v1.7.1 item 3: dígitos unicode não valem como número
+            assert _numero_citado("٣٧/٢٣") is None and _numero_citado("３７/２３") is None and _numero_citado("37/23") == ("00037/23", "37", "23")
+            # v1.7.1 item 5: mesmo NNNNN/AA com sigla diferente não é o próprio; sem sigla, ou mesma sigla, é
+            _o = {"numero": "00037/23", "processo": "01111/20", "sigla": "AC1-TC"}
+            assert _eh_o_proprio(_o, "00037/23") and _eh_o_proprio(_o, "00037/23", "AC1-TC") and not _eh_o_proprio(_o, "00037/23", "APL-TC")
+            assert _eh_o_proprio({"numero": "00500/24", "processo": "00037/23", "sigla": "AC1-TC"}, "00037/23", "APL-TC")   # número de PROCESSO não tem sigla
+            _ach, _pr, _sn = _citacoes_no_portal([{"source": dict(_o, idDecisao=1, ementa="cf. 00037/23")}], "00037/23", "37", "23", "APL-TC")
+            assert len(_ach) == 1 and _pr == 0
             # janela: contexto em volta, sem repetir a mesma ocorrência colada
             _jan = _janelas_de_citacao_tcero("a " * 300 + "Acórdão APL-TC 00037/23 diz. Também 00037/23 de novo. " + "b " * 300, "37", "23")
             assert len(_jan) == 1 and "Acórdão APL-TC 00037/23" in _jan[0][1] and len(_jan[0][1]) < 700, _jan
