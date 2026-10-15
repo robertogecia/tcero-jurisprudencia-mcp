@@ -98,6 +98,32 @@ O que você recebe de volta:
   decisão é aberta. Serve para provar depois, a olho ou por script, que a citação da peça veio do
   documento — e não da imaginação da IA.
 
+**O que há de novo na versão 1.7.0, em linguagem simples:**
+
+- **"Quem citou este julgado depois?" (`julgados_que_citam_tcero`).** Você dá o número de um
+  processo ou de um acórdão (por exemplo `00037/23`) e a extensão mostra os acórdãos que o citam,
+  com o trecho em volta, e diz de onde veio cada achado: do que o portal do tribunal indexa ou dos
+  acórdãos que já passaram por este computador (sem rede). **É leitura assistida, não confirmação.**
+  Ela **não detecta superação** (não diz se o julgado citado foi superado ou distinguido) e
+  **resultado zero não prova que ninguém aplicou o julgado**: o portal só indexa o texto da ementa,
+  do dispositivo e das informações adicionais, e o PDF do inteiro teor não é varrido, então muita
+  citação só aparece lá dentro e não é achada.
+- **A tese da ementa, literal.** Quando a ementa segue o modelo novo ("Tese de julgamento: ..."), a busca, a
+  triagem e a leitura completa mostram a tese entre aspas, tal como está. Se ela é longa e foi cortada, vem o aviso
+  "TESE INCOMPLETA" e a orientação de abrir o inteiro teor. Ementa do modelo antigo não mostra nada. A
+  tese da ementa é o que o órgão enunciou, **não prova de que foi a razão de decidir**, e **para pôr entre aspas
+  continua valendo a conferência de `verificar_citacao_tcero`**.
+- **"VOZ DA CASA".** Ao conferir um trecho, se ele está na ementa, no dispositivo ou no fecho do
+  próprio acórdão, a extensão avisa que ali quem fala é o TCE-RO, e não um parecer ou outro julgado
+  transcrito dentro do voto. É o contrário dos avisos amarelos: é um sinal de que a frase é da Corte.
+- **Placar no fim da busca.** Quantas consultas ao portal você já fez na janela do limitador e em
+  que nível ele está, para você saber quanto ainda pode pesquisar antes de a extensão pedir uma pausa.
+- **Aviso de consulta pouco seletiva.** Quando o portal devolve mil decisões ou mais (as palavras
+  entram em OU), a busca diz que o topo é só uma amostra e sugere restringir por relator, órgão
+  julgador ou ano, ou exigir os conceitos com `grupos`.
+- **Resposta que nunca vem cortada no meio de uma decisão.** O teto de 60 mil caracteres já existia;
+  agora, se a busca precisa cortar, ela corta no limite de uma decisão e diz até onde mostrou.
+
 **O que as ferramentas novas da versão 1.6.0 fazem, em linguagem simples:**
 
 - **"O que eu já li?" (`buscar_recibos_tcero`).** Procura nos acórdãos que o Claude já abriu para
@@ -221,9 +247,48 @@ não precisa ler nada disto.
 | `diagnostico_erros_tcero` | **v1.6.0.** Resume o diário local de falhas (`dias`, `relatorio`) e devolve o link de relato já preenchido; sem rede |
 | `linha_do_tempo_tcero` | **v1.6.0.** Contagem por ano e por órgão sobre UMA consulta, com as 2 decisões mais pertinentes por ano |
 | `sugerir_termos_tcero` | **v1.6.0.** 10–20 palavras e pares de palavras distintivos das decisões que casaram, para montar `grupos` |
+| `julgados_que_citam_tcero` | **v1.7.0.** Quem cita um processo/acórdão (`numero` NNNNN/AA, `limite`): UMA consulta ao portal (frase entre aspas no texto livre) + recibos locais sem rede; leitura assistida — ver seção "Ferramentas da v1.7.0" |
 | `diagnostico_ritmo_tcero` | estado do disjuntor/limitador, sem rede; primeira linha traz a versão instalada |
 
 `obter_acordao_tcero` ganhou o parâmetro `modo` (`"completo"`, padrão, ou `"triagem"`).
+
+## v1.7.0 (15/10/2026) — porte do TJRO v1.35 / TRF1
+
+Só muda a **saída** das ferramentas; o recibo de custódia (campos e serialização) é o da 1.6.0 — o selftest
+compara os 21 campos, a ordem e o sha256, e o recibo gravado byte a byte por esta versão e pela 1.6.0 é idêntico.
+Frases de saída estáveis (o pacote Node é porte deste arquivo).
+
+### `julgados_que_citam_tcero(numero, limite?)`
+- Entrada: `NNNNN/AA` (1 a 5 dígitos, barra, 2 dígitos; `37/23` vira `00037/23`). Só busca **texto**: uma consulta ao
+  portal com `textoLivre="00037/23"` (frase entre aspas) e a mesma busca, sem rede, no campo `texto` dos recibos locais
+  (ementa + dispositivo + PDF quando lido). **Não varre PDF.**
+- O número de processo e o de acórdão têm o mesmo formato; a ferramenta não os distingue: acha quem cita um ou outro, e
+  descarta a própria decisão (mesmo `numero` ou mesmo `processo`).
+- Comportamento do portal, medido ao vivo em 15/10/2026 (3 requisições, `harness/_log_rede.json`, itens 35 a 37): com aspas, `"00037/23"` devolveu
+  28 decisões (307 KB); sem aspas, 366 (4,7 MB, o OU de `00037` e `23`). As **mesmas 24** trazem o número no texto nos dois casos: a frase não
+  perde nenhuma. Mesmo assim o filtro local (regex do número, sem recusar zeros à esquerda; recusa dígito colado, ano de 4 dígitos e data)
+  é o que decide: se o portal deixar de honrar a frase, a saída não lista a base inteira (a fixture de 1.141 decisões, que simula isso, dá 17 achados).
+- Janela de 350 caracteres antes e 250 depois da ocorrência, com a fonte de cada achado: `[ementa]`,
+  `[dispositivo (acordaoDescricao)]`, `[informações adicionais (IA do DEJUR, não citável)]` ou `[recibo local (...; posição no julgado, página)]`.
+  `fonte: portal`, `fonte: recibo local` ou `fonte: portal + recibo local`.
+- Avisos obrigatórios (texto fixo): "NÃO detecta superação nem distinção"; "ZERO AQUI NÃO PROVA que ninguém aplicou o julgado";
+  "o portal indexa texto ... e o PDF do inteiro teor NÃO é varrido; o recall é baixo"; "Os recibos locais cobrem só o que esta máquina já leu".
+  Se o portal falhar: `[PESQUISA NÃO REALIZADA no portal] ...` e a saída segue só com os recibos.
+- Não mede quanto as citações seguem ou afastam o julgado (o TJRO mediu 486 citações; aqui não há medição, então nenhum número é dado).
+
+### Tese da ementa, VOZ DA CASA, placar, consulta pouco seletiva, corte
+- `- TESE DA EMENTA (literal; tese enunciada pelo órgão, não prova de ratio; para aspas, confira com verificar_citacao_tcero): "..."`,
+  com `⚠️ TESE INCOMPLETA: k de N itens` (ou `trecho parcial`) e ` […]` quando cortada em 1.000 caracteres. Usa o parser de seções da
+  ementa que já existia; no modelo do TCE-RO a tese vem sob **III. Entendimento** (medido: 12 das 1.141 ementas da fixture trazem
+  "Tese de julgamento:", todas sob Entendimento), no modelo do CNJ sob **IV. Dispositivo e tese**. Sem seções (modelo antigo) ou sem o
+  rótulo: nada. Sai na busca (linha após a ementa), na triagem e no modo completo/`detalhar`. Nunca entra no recibo.
+- `VOZ DA CASA:` em `verificar_citacao_tcero` (no resultado de `_verificar_trecho`, chave nova `notas`; `alertas` mantém o contrato da 1.6.0:
+  vazio = nada a avisar). Linha `   ℹ VOZ DA CASA: o trecho está em <onde> (<página>) — é palavra do próprio TCE-RO ...`, com o mesmo "onde" da
+  POSIÇÃO NO JULGADO. Dispara quando o trecho está na ementa ou no dispositivo do cadastro, ou no acórdão/fecho do PDF.
+- Última linha da busca: `Placar: N consulta(s) ao portal na janela de ... (limite ...) · limitador: nível x/y, livre`.
+- `⚠️ Consulta pouco seletiva: o portal devolveu N decisões ...` a partir de 1.000 (substitui a "Dica: total alto", que continua entre 200 e 999).
+- Corte: já havia teto de 60.000 caracteres (`ORCAMENTO_SAIDA`) em fronteira de linha; agora a busca recua ao começo do resultado
+  que ficaria pela metade e diz `Cortei na fronteira do resultado: N resultado(s) inteiro(s) acima`. O placar vem depois do corte.
 
 ## Ferramentas da v1.6.0 (15/10/2026)
 
@@ -292,8 +357,7 @@ anotação independente (1 anotador, `references/red-team-2026-09-22b/anotacao.j
 resumo: **as sugestões ampliam o conjunto, mas coladas em bloco derrubam o topo** — decisões anotadas
 como relevantes: no conjunto 43 → 47 de 49 (3 sugestões em OU no grupo mais estreito); no top-10 36 → 27
 (3 sugestões) e 19 (5 sugestões) de 47; piorou o topo em 4 de 6 consultas, igual em 1, melhorou em 1.
-Das 107 sugestões listadas, por leitura minha (não cega, um avaliador): 59% pertinentes, 25% genéricas,
-16% ruído. Detalhes e ressalvas em `harness/medicao-sugerir-termos-2026-10-15.md`. **Não se declara ganho de busca.** O ganho que se sustenta é o de
+Das 107 sugestões listadas, rotulagem cega por 2 anotadores independentes (Sonnet e Opus, 15/10/2026, concordância 74%, kappa 0,60): pertinentes nos dois 26% (28 de 107), em pelo menos um 37%; 21 termos foram ruído nos dois. A estimativa anterior de 59% (leitura minha, não cega) estava inflada e não vale. Detalhes e ressalvas em `harness/medicao-sugerir-termos-2026-10-15.md`. **Não se declara ganho de busca.** O ganho que se sustenta é o de
 descoberta de vocabulário, com ruído; a curadoria é de quem lê.
 
 ### Modo `triagem` em `obter_acordao_tcero`

@@ -42,7 +42,7 @@ Para cada consulta de `medir.py`: (1) sugestões calculadas sobre a consulta **i
 
 ## Qualidade das sugestões (leitura minha, NÃO cega, um avaliador só)
 
-Cada sugestão classificada, lendo a lista, como pertinente ao tema da pergunta (P), genérica do direito de contas (G) ou ruído (N). 107 sugestões em 6 consultas: **P = 63 (59%), G = 27 (25%), N = 17 (16%)**. Por consulta (P/G/N): 1 = 10/6/0; 2 = 16/3/1; 3 = 4/7/5; 4 = 13/1/6; 5 = 14/5/1; 6 = 6/5/4. A consulta 3 (reincidência/dosimetria) é a pior (palavras como 'evitar', 'parte', 'ensejar', 'regência'); a 4 tem ruído de baixa cobertura (palavras que só 3 de 10 ementas trazem). Para comparação, o TJRO mediu 65% de pertinência e 4% de ruído com rotulagem cega e dupla — **este número NÃO é comparável** (avaliador único, sem cegueira, amostra pequena): é um teste de sanidade, não uma validação.
+Cada sugestão classificada, lendo a lista, como pertinente ao tema da pergunta (P), genérica do direito de contas (G) ou ruído (N). 107 sugestões em 6 consultas: **P = 63 (59%), G = 27 (25%), N = 17 (16%)** — LEITURA NÃO CEGA, SUPERADA: a rotulagem cega por 2 anotadores independentes (Sonnet e Opus, 15/10/2026, concordância 74%, kappa 0,60): pertinentes nos dois 26% (28 de 107), em pelo menos um 37%; 21 termos foram ruído nos dois. A estimativa anterior de 59% (leitura minha, não cega) estava inflada e não vale. Por consulta (P/G/N): 1 = 10/6/0; 2 = 16/3/1; 3 = 4/7/5; 4 = 13/1/6; 5 = 14/5/1; 6 = 6/5/4. A consulta 3 (reincidência/dosimetria) é a pior (palavras como 'evitar', 'parte', 'ensejar', 'regência'); a 4 tem ruído de baixa cobertura (palavras que só 3 de 10 ementas trazem). Para comparação, o TJRO mediu 65% de pertinência e 4% de ruído com rotulagem cega e dupla — **este número NÃO é comparável** (avaliador único, sem cegueira, amostra pequena): é um teste de sanidade, não uma validação.
 
 ## Listas medidas
 
@@ -73,3 +73,8 @@ contrato; contratual; gestor; empresa; basico; projeto; adequada; atribuida; res
 ## O que falta para declarar ganho
 
 Rotulagem cega e dupla (dois leitores independentes, sem saber de qual forma veio cada resultado) de uma amostra NOVA de resultados: ajustar numa amostra e validar noutra. Sem isso, os números acima são de ajuste e de sanidade.
+
+
+## Rotulagem cega (15/10/2026)
+
+Entrada embaralhada, sem métricas, dois anotadores independentes (Sonnet e Opus). Anotador A: 32 pertinentes, 47 genéricos, 28 ruído. Anotador B: 36, 39, 32. Concordância 74%, kappa 0,60. Pertinente nos dois: 28/107 (26%); em pelo menos um: 40/107 (37%). Ruído nos dois (exemplos): insigne, adequada, idonea, deixarem, efetuados, atribuida. Conclusão: o vocabulário sugerido é majoritariamente genérico ou ruído; a ferramenta serve para dar ideias, não para colar. Nenhum ajuste de filtro foi feito sobre esta amostra (ajuste exige amostra nova para validar).

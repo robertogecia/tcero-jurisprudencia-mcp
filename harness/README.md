@@ -83,3 +83,11 @@ não muda o conjunto).
 - `harness/medir_sugestoes.py` — mede as sugestões sobre as 6 consultas do `gold.json` (mock do OU nativo de `medir.py`, zero rede), em quatro formas de `grupos` (A base; B3/B5 = + 3/5 sugestões em OU no grupo mais estreito; C3 = + 3 como grupo E), contra o gold (circular) e contra a anotação independente de `references/red-team-2026-09-22b/anotacao.json`. O fundo é refeito sem as decisões casadas de cada consulta. Saída: `harness/_resultado_sugestoes.json` e `harness/medicao-sugerir-termos-2026-10-15.md` (números, protocolo e limites).
 - Conclusão registrada: as sugestões ampliam o conjunto (43 → 47 de 49 anotados), mas coladas em bloco derrubam o topo (36 → 27 de 47). **Não declarado como ganho de busca.** Falta rotulagem cega e dupla de amostra nova.
 - Rede desta rodada (smoke de cada ferramenta nova): 4 requisições, registradas em `harness/_log_rede.json` (itens 31 a 34).
+
+## v1.7.0 (15/10/2026) — julgados_que_citam_tcero e saídas novas
+
+- Sem script novo: tudo coberto pelo bloco de selftest da v1.7.0 (offline, pastas temporárias, `fixtures/` e `fixtures/pdf/98114.pdf`), inclusive a identidade dos 21 campos do recibo em relação à v1.6.0.
+- Comportamento do portal conferido nas fixtures antes de escrever a ferramenta: `fixtures/exp_A4_frase_exata.json` (frase entre aspas honrada: 0 resultados para uma frase inexistente) e `fixtures/exp_C2_controle_or.json` (OU puro: 1.141 decisões). Pela própria fixture de 1.141 decisões, 17 trazem `00037/23` no texto (fora a própria); o filtro local é o que impede de listar a base.
+- Rede desta rodada (ao vivo, 3 requisições, intervalo >= 2,5 s, só no fim; `harness/_log_rede.json`, itens 35 a 37): `textoLivre="00037/23"` (28 decisões, 307 KB), `textoLivre=00037/23` sem aspas (366 decisões, 4,7 MB) e a ferramenta ponta a ponta (a mesma consulta com aspas, 24 achados). As mesmas 24 decisões trazem o número no texto nos dois primeiros casos.
+- Limites: uma única amostra de número (`00037/23`); número só em ementa/dispositivo/informações adicionais; nenhuma medição de quantas citações seguem ou afastam o julgado, então a saída não dá porcentagem.
+

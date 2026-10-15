@@ -1,5 +1,18 @@
 # Changelog — servidor_tcero.py
 
+## 1.7.0 — 15/10/2026
+
+Porte do TJRO v1.35 / TRF1. Só muda a saída das ferramentas: **o recibo é o da 1.6.0** (21 campos, mesma ordem e serialização; conferido no selftest e byte a byte contra a 1.6.0). Frases de saída estáveis para o porte Node.
+
+- **`julgados_que_citam_tcero`** (`numero` NNNNN/AA, `limite`): quem cita um processo ou acórdão, só por texto (portal, `textoLivre` entre aspas, 1 consulta) + recibos locais (sem rede); a fonte de cada achado vem dita; janela de contexto; avisos de que não detecta superação, de que zero não prova nada e de que o recall é baixo (PDF não é varrido). O filtro local do número garante que um portal que não honre a frase nunca despeja a base inteira. Ao vivo (3 requisições): com aspas 28 decisões, sem aspas 366, as mesmas 24 com o número no texto.
+- **TESE DA EMENTA (literal)** na busca, na triagem e no modo completo, com `⚠️ TESE INCOMPLETA` quando cortada; no TCE-RO a tese está sob "III. Entendimento" (modelo do CNJ: "IV. Dispositivo e tese"); modelo antigo não mostra nada; a linha manda conferir aspas em `verificar_citacao_tcero`.
+- **VOZ DA CASA** no verificador (`notas`, linha `ℹ`), quando o trecho está na ementa, no dispositivo ou no fecho do próprio acórdão. `alertas` não mudou.
+- **Placar** de consultas e nível do limitador no fim da busca.
+- **Consulta pouco seletiva** a partir de 1.000 resultados do portal.
+- **Corte da busca no limite de um resultado** (o teto de 60 mil já existia; ganhou a fronteira de resultado e o aviso).
+- Selftest: bloco novo (fixtures e PDFs reais, pastas temporárias) para cada item e para a identidade dos campos do recibo. `VERSAO = "1.7.0"`.
+- **Correção de número (sugerir_termos):** a estimativa de 59% de sugestões pertinentes (v1.6.0) era leitura minha, não cega, e estava inflada. Rotulagem cega por 2 anotadores independentes (Sonnet e Opus): pertinentes nos dois 26% (28/107), em pelo menos um 37%; concordância 74% (kappa 0,60). Use uma sugestão por vez, com critério seu.
+
 ## 1.6.0 — 15/10/2026
 
 Porte das ideias do TJRO v1.25–v1.34 para o TCE-RO. O pacote Node (`.mcpb`) é porte deste arquivo e será atualizado depois; a lógica nova está em funções puras (texto → texto), separadas da rede, com frases de saída estáveis.
