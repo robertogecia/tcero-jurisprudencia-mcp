@@ -66,6 +66,14 @@ Você pede em português, como pediria a um estagiário, e o Claude usa a extens
 > "Abra o acórdão APL-TC 00055/26 e leia o inteiro teor."
 >
 > "Esse trecho que você citou está mesmo no acórdão? Confira."
+>
+> "O que eu já li do TCE-RO sobre reincidência e multa?"
+>
+> "Em que anos e em qual Câmara aparece o tema contratação temporária?"
+>
+> "Com que outras palavras o tribunal fala de direcionamento de licitação?"
+>
+> "Vale a pena ler o acórdão 98114 inteiro? Faça uma triagem antes."
 
 O que você recebe de volta:
 
@@ -90,6 +98,35 @@ O que você recebe de volta:
   decisão é aberta. Serve para provar depois, a olho ou por script, que a citação da peça veio do
   documento — e não da imaginação da IA.
 
+**O que as ferramentas novas da versão 1.6.0 fazem, em linguagem simples:**
+
+- **"O que eu já li?" (`buscar_recibos_tcero`).** Procura nos acórdãos que o Claude já abriu para
+  você neste computador, **sem consultar o tribunal** e sem gastar nenhuma consulta. Serve para
+  reencontrar um acórdão da semana passada, ou achar uma expressão no voto de um acórdão que já
+  passou por aqui. Atenção: ela só enxerga o que já foi aberto. **Resultado zero não quer dizer
+  que o tribunal não tem decisão sobre o assunto** — para isso, a pesquisa normal.
+- **"Quando e onde o tema aparece?" (`linha_do_tempo_tcero`).** Conta, ano a ano e por Câmara/Pleno,
+  as decisões da sua pesquisa, e mostra as duas mais pertinentes de cada ano, com citação e link.
+  É contagem do que o portal devolveu, **não prova de que a Corte mudou de entendimento**: serve
+  para saber quais períodos ler.
+- **"Com que outras palavras o tribunal fala disso?" (`sugerir_termos_tcero`).** O portal só acha as
+  palavras que você digitou. Esta ferramenta olha as ementas das decisões que casaram a sua
+  pesquisa e lista de 10 a 20 palavras e pares de palavras que costumam acompanhá-las. Você escolhe
+  as que são mesmo sinônimas do seu assunto e refaz a busca. **Não cole a lista inteira na busca**:
+  nos testes isso piorou o topo da lista na maioria dos casos (detalhes na parte técnica).
+- **"Vale a pena ler este acórdão?" (`modo="triagem"` em `obter_acordao_tcero`).** Uma leitura
+  barata (no acórdão 98114, 7,5 mil caracteres contra 55 mil do modo completo): citação, resultado, ementa,
+  dispositivo e, se pedir o PDF, onde começam o relatório e o voto, o fecho com o que o colegiado
+  decidiu e os pontos em que há parecer do Ministério Público de Contas, transcrição de outro
+  julgado, alegação da parte ou voto de outro conselheiro. **A triagem nunca serve para pôr
+  trecho entre aspas.**
+- **"A extensão está falhando?" (`diagnostico_erros_tcero`).** A extensão anota, no seu computador,
+  só os erros técnicos (rede, portal, PDF): nunca o que você pesquisou. Esta ferramenta resume os
+  erros e entrega o link do formulário de relato já preenchido.
+- **Avisos que agora dizem onde.** Quando um trecho está sob uma frase do tipo "ainda que se
+  admitisse…" (obiter dictum) a conferência mostra a frase; quando o trecho está no voto de outro
+  conselheiro, mostra o título do voto; e a posição no julgado ganha a página aproximada do PDF.
+
 ## O que ela NÃO faz (leia antes de confiar)
 
 - **Não substitui a leitura do acórdão.** A citação pronta, o resumo e o panorama são ponto de
@@ -101,6 +138,10 @@ O que você recebe de volta:
   citá-lo como se fosse o acórdão.
 - **Não lê acórdão digitalizado como imagem** (PDF sem texto). Ela avisa e você abre o link no
   navegador.
+- **A linha do tempo e as sugestões de palavras são indício, não conclusão.** A contagem por ano
+  mistura volume de processos, composição das Câmaras e o que o portal publica; a lista de
+  palavras vem das decisões que já casaram a sua busca e tem ruído (nos testes, cerca de uma em
+  seis sugestões era ruído e uma em quatro, genérica).
 - **Não pesquisa outros tribunais.** TJRO, TRF1, STJ e outros têm extensões próprias do mesmo
   autor; superação de entendimento vinda de cima (TCU, STF) se confere na fonte respectiva.
 - **Não dá parecer.** Toda saída é rascunho para a sua revisão; a decisão sobre tese, pedido e
@@ -122,8 +163,11 @@ O que você recebe de volta:
 
 ## Atualizar e desinstalar
 
-- **Atualizar:** quando sair versão nova, a primeira resposta da conversa avisa. Baixe o arquivo
-  novo pelo mesmo botão do Passo 1 e instale por cima; a versão antiga é substituída.
+- **Atualizar:** quando sair versão nova, a primeira resposta da conversa avisa. **Pelo Claude
+  Desktop (arquivo `.mcpb`, o caminho deste guia):** baixe o arquivo novo pelo mesmo botão do
+  Passo 1, dê dois cliques nele e confirme "Instalar" por cima; a versão antiga é substituída;
+  feche e abra o Claude. **Se o seu escritório instalou pelo Python (cópia do código no
+  computador):** rode `git pull` na pasta do programa e reinicie o Claude.
 - **Desinstalar:** Claude Desktop → Configurações → Extensões → "Jurisprudência TCE-RO" →
   Remover. Se quiser, apague também a pasta de recibos `.tcero-jurisprudencia-recibos` na sua
   pasta de usuário.
@@ -173,7 +217,116 @@ não precisa ler nada disto.
 | `buscar_jurisprudencia_tcero` | busca por texto livre e/ou por número de acórdão, número de processo, relator ou órgão julgador; `grupos` (E entre grupos, OU dentro do grupo) filtra por 2+ conceitos — o E é feito **no cliente**, porque o portal só sabe fazer OU e ordena por data, não por relevância; paginação **no cliente** (a API do portal não pagina no servidor); resumo compacto por padrão (já com o link do PDF de cada item, corrigido para o host atual), `detalhar=true` para os primeiros itens da página |
 | `obter_acordao_tcero` | detalhe completo de uma decisão — ementa integral, dispositivo (`acordaoDescricao`), informações adicionais (⚠️ geradas por IA pelo DEJUR do próprio tribunal), legislação aplicada, link do PDF do inteiro teor; prefira `id_decisao` (busca direta, resposta pequena); `ler_inteiro_teor=true` baixa esse PDF e EXTRAI O TEXTO REAL (relatório + voto, não só ementa/dispositivo) — ver seção dedicada abaixo; grava um **recibo de custódia** em disco a cada chamada — ver seção dedicada |
 | `verificar_citacao_tcero` | confere se um trecho aparece literalmente na ementa, no dispositivo ou (quando já lido) no inteiro teor em PDF antes de ir entre aspas — `[...]` separa fragmentos, ❌ vem com o que não bateu; casamento por **palavra inteira** (não substring), mínimo de 15 caracteres não-espaço por fragmento; conferido primeiro contra o **recibo local** (zero requisição) quando ele existe, senão contra o portal; ✅ pode vir com **alertas de atribuição** (o trecho é literal, mas pode não ser a posição da Corte) — ver seção dedicada |
+| `buscar_recibos_tcero` | **v1.6.0.** Busca SEM REDE nos recibos locais (`consulta`, `grupos`, `relator`, `orgao`, `limite`) — ver seção "Ferramentas da v1.6.0" |
+| `diagnostico_erros_tcero` | **v1.6.0.** Resume o diário local de falhas (`dias`, `relatorio`) e devolve o link de relato já preenchido; sem rede |
+| `linha_do_tempo_tcero` | **v1.6.0.** Contagem por ano e por órgão sobre UMA consulta, com as 2 decisões mais pertinentes por ano |
+| `sugerir_termos_tcero` | **v1.6.0.** 10–20 palavras e pares de palavras distintivos das decisões que casaram, para montar `grupos` |
 | `diagnostico_ritmo_tcero` | estado do disjuntor/limitador, sem rede; primeira linha traz a versão instalada |
+
+`obter_acordao_tcero` ganhou o parâmetro `modo` (`"completo"`, padrão, ou `"triagem"`).
+
+## Ferramentas da v1.6.0 (15/10/2026)
+
+Porte das ideias do TJRO v1.25–v1.34 (`recibos.js`, `erros.js`, `linhadotempo.js`, `vocabulario.js`,
+modo `triagem`) adaptadas ao que o ePapyrus entrega. Toda a lógica nova tem uma função **pura**
+(texto → texto) separada da rede, com frases de saída estáveis: o pacote Node (`.mcpb`) é porte
+deste arquivo e é atualizado depois, a partir daqui.
+
+### `buscar_recibos_tcero(consulta?, grupos?, relator?, orgao?, limite?)`
+
+Zero requisição. Lê `~/.tcero-jurisprudencia-recibos/*.json` (ou `TCERO_MCP_DIR_RECIBOS`), ignora
+recibo com hash que não confere (e diz quantos), e procura no campo `texto` (ementa + dispositivo +
+PDF, **nunca** `texto_ia_dejur`). Palavra inteira com a mesma `_normalizar_casamento` do verificador
+(caixa, acento, pontuação, aspas); `"frase exata"` em ordem; `multa*` = prefixo; `grupos` = OU dentro,
+E entre grupos; `relator` = substring sem caixa/acento; `orgao` compara com o órgão do **cadastro**
+(e, quando o PDF foi lido e o fecho diz outro órgão, o resultado avisa que vale o fecho). Por recibo:
+citação pronta (`_citacao`, **sem a data do DOe**, que o recibo não guarda), id, link, a verificação
+gravada (derivada de `texto_pdf_completo`: `None` = só ementa + dispositivo; `True` = extração completa,
+sem registro de PDF misto; `False` = lido em parte), posição no julgado + página aproximada do primeiro
+termo (`_posicao_tcero`, `_pagina_pdf_tcero`) e o trecho em volta. A saída diz quantos recibos existem,
+quantos têm o PDF lido e que zero não é "não há jurisprudência". **O formato do recibo não mudou**
+(nenhum campo novo; o lint da `peticao-rg` continua conferindo os mesmos hashes).
+
+### Diário de erros e `diagnostico_erros_tcero(dias?, relatorio?)`
+
+Toda falha de ferramenta (exceção; ou marcador `[LEITURA DE PDF NÃO REALIZADA`, `[PESQUISA…`, erro de
+portal com rodapé; limitação parcial: `[EXTRAÇÃO PARCIAL`, PDF sem texto) grava uma linha JSON em
+`$TCERO_MCP_DIR_ESTADO/erros.jsonl` (padrão `~/.tcero-jurisprudencia/erros.jsonl`; 0600, pasta 0700;
+poda para as últimas 500 linhas acima de 400 KB). Campos: `quando`, `versao`, `sistema`, `ferramenta`,
+`tipo`, `http`, `parcial`, `ms`, `args` (só presença/tamanho e enumerações seguras: nunca o texto da
+busca, nome ou número), `limitador`, `mensagem` (sanitizada: URL sem consulta e sem hash de PDF, trecho
+entre aspas vira `«…»`, número de processo/acórdão e id longo somem). Tipos novos além dos de
+`_tipo_do_erro`: `pdf_falha`, `pdf_sem_texto`, `pdf_parcial`, `formato_inesperado`,
+`dependencia_ausente`. Limite de ritmo auto-imposto **não** é registrado; erro de validação de entrada
+do usuário também não. A tool resume por tipo × ferramenta, período, versões, causa provável e quem
+corrige, e devolve o `_link_relato(tipo)` (só dado técnico). Selftest: um segredo nos parâmetros e na
+mensagem não aparece no arquivo.
+
+### `linha_do_tempo_tcero(texto_livre?, grupos?, relator?, orgao_julgador?, ano_inicio?, ano_fim?)`
+
+Uma consulta (`_consulta_filtrada`, que monta os mesmos parâmetros de `_buscar`: a resposta de uma
+busca idêntica feita há pouco vem do cache, zero requisição — o selftest compara os parâmetros e a
+contagem de chamadas). Tabela ano × órgão (ano = ano da **sessão**; sem sessão = linha própria),
+recorte `ano_inicio`/`ano_fim` no cliente, e por ano as 2 decisões de maior relevância (o mesmo
+`_pontuar_relevancia`, desempate por data), com citação e link. Aviso fixo: é contagem do que o
+portal devolveu para aquela consulta, não tendência da Corte.
+
+### `sugerir_termos_tcero(texto_livre? | grupos?)`
+
+Sobre a resposta da busca (cache; senão uma consulta). **Casadas** = decisões que casam, no núcleo
+(ementa + dispositivo), o maior número de termos/grupos para o qual há pelo menos 10 decisões
+(`_separar_casadas`); **restante** = o resto da resposta. Candidatas: palavras de 5+ letras e pares
+adjacentes (sem palavras de ligação, sem os termos pedidos nem seus radicais, sem nomes de relator),
+com piso de frequência entre as casadas de 20% (cai a 15/10/7% até haver 10 sugestões), frequência pelo
+menos 1,3× a do restante (quando o restante tem 15+ decisões) e **lift sobre o fundo** pelo menos 5×
+(`fundo_vocabulario.json`: df de palavras e pares sobre as 5.052 decisões do snapshot, gerado por
+`harness/gerar_fundo.py`; o piso desce até 1,5× em consulta ampla, em que 5× é inatingível). Pontuação =
+frequência × log(lift). Menos de 8 casadas, ou sem fundo e sem restante: não sugere e diz por quê. O
+texto de IA do DEJUR nunca entra.
+
+**Medição (15/10/2026, `harness/medir_sugestoes.py`, `harness/medicao-sugerir-termos-2026-10-15.md`).**
+Seis consultas do `gold.json`, mock do OU nativo, fundo refeito sem as decisões casadas de cada
+consulta. O gold é circular (ver `references/red-team-2026-09-22b.md`): adicionar sinônimos em OU
+nunca derruba o recall do gold e o gold não vê o que entra de novo; por isso o número que vale é a
+anotação independente (1 anotador, `references/red-team-2026-09-22b/anotacao.json`). Resultado, em
+resumo: **as sugestões ampliam o conjunto, mas coladas em bloco derrubam o topo** — decisões anotadas
+como relevantes: no conjunto 43 → 47 de 49 (3 sugestões em OU no grupo mais estreito); no top-10 36 → 27
+(3 sugestões) e 19 (5 sugestões) de 47; piorou o topo em 4 de 6 consultas, igual em 1, melhorou em 1.
+Das 107 sugestões listadas, por leitura minha (não cega, um avaliador): 59% pertinentes, 25% genéricas,
+16% ruído. Detalhes e ressalvas em `harness/medicao-sugerir-termos-2026-10-15.md`. **Não se declara ganho de busca.** O ganho que se sustenta é o de
+descoberta de vocabulário, com ruído; a curadoria é de quem lê.
+
+### Modo `triagem` em `obter_acordao_tcero`
+
+`modo="triagem"`: citação, processo/natureza/assunto/votação/resultado, órgão do cadastro, avisos de
+cancelamento/vínculo, ementa inteira (limite de 12 mil caracteres), dispositivo, link. Com
+`ler_inteiro_teor=true`: do PDF, a estrutura (`_estrutura_pdf_tcero`: ACÓRDÃO, RELATÓRIO, VOTO,
+voto de outro conselheiro, com página aproximada), o fecho (`_fecho_do_pdf`: de "ACORDAM os Senhores
+Conselheiros" até o relatório/voto ou 1.800 caracteres, sem cabeçalho de página) e as linhas que os
+detectores já marcam (os mesmos gatilhos dos campos do recibo: divergência/vista, parecer do MPC,
+alegação da parte, transcrição, mais a marca de obiter), no máximo 3 por tipo, cada uma com a posição
+no julgado e a página. Sem o texto corrido e sem a IA do DEJUR. No acórdão 98114: 7,5 mil caracteres
+contra 55 mil do modo completo. **Recibo:** o mesmo caminho do modo completo (mesmo download/cache,
+mesmas chamadas a `_texto_pdf_para_recibo` e `_gravar_recibo_tcero`); o selftest compara os dois
+recibos campo a campo e confere que uma triagem sem PDF não rebaixa um recibo que já tem o PDF.
+
+### Alertas que dizem onde
+
+`OBITER DICTUM?` ganhou a frase onde está a marca (`A frase: «…» + o trecho.`) ou diz que a marca
+está no começo do próprio trecho — mesma redação do TJRO v1.33. A posição "VOTO de outro conselheiro"
+ganhou o título do voto (`(título: «…»)`), e `verificar_citacao_tcero`/`buscar_recibos_tcero` mostram
+a página aproximada do PDF (`p. ~N de M`, lida do cabeçalho "N de M" que o TCE-RO repete em toda folha).
+**Não há rótulo `VOTO DIVERGENTE` no TCE-RO** (o equivalente aqui é a posição de outro conselheiro) e
+não foi criado um sem medir. Em 900 janelas amostradas dos 36 recibos locais, nada além disso mudou
+em relação à v1.5.1 (mesmos valores, alertas e posições).
+
+### Atualizar
+
+No Python, atualizar é `git pull` + reiniciar o cliente; no Claude Desktop (`.mcpb`), baixar o arquivo
+da release e dar dois cliques. O aviso de versão nova passou a trazer as duas instruções
+(`COMO_ATUALIZAR`). **A ferramenta que baixa o `.mcpb` sozinha (`atualizar_extensao`, com SHA-256
+conferido, como no TJRO) fica para o porte Node:** no Python não faria sentido, pois quem usa o
+Python já tem o `git`.
 
 ## Por que este servidor é mais simples que os irmãos
 
@@ -637,8 +790,9 @@ Pensado para ser fácil de verificar antes de instalar, não só "confie em mim"
 - **Só leitura, sem credenciais.** As buscas fazem requisições HTTP `GET` à API pública do portal (`papyrus.tcero.tc.br`); o inteiro teor baixa o PDF de `tcero.tc.br`. Não pedem login, token nem chave de API. O host do PDF é conferido contra uma lista fechada antes e depois de qualquer redirecionamento — o servidor não segue link para fora do tribunal.
 - **Sem coleta de dados.** Nenhuma telemetria. As únicas conexões são ao tribunal e, uma vez por processo, um `GET` sem dados seus a `api.github.com` para o **aviso de versão nova** (abaixo).
 - **Recibo de custódia (anti-alucinação).** Toda vez que uma decisão é aberta com `obter_acordao_tcero`, o texto que o portal entregou (ementa, dispositivo e, se lido, o PDF) fica gravado em `~/.tcero-jurisprudencia-recibos/<id da decisão>.json`, com hash. Serve para conferir depois, por script ou a olho, se o trecho que foi para a peça está mesmo no documento do tribunal — e não só no que a IA diz ter lido. É texto público de acórdão e fica só na sua máquina; pode apagar a pasta quando quiser. Outra pasta: variável de ambiente `TCERO_MCP_DIR_RECIBOS`.
+- **Diário de erros local (v1.6.0).** Falhas de ferramenta ficam em `~/.tcero-jurisprudencia/erros.jsonl` (outra pasta: `TCERO_MCP_DIR_ESTADO`), só com dado técnico — ferramenta, tipo, mensagem curta sanitizada, versão, sistema, data. Nunca o texto da busca, nome de parte, número de processo ou trecho citado; nada sai da máquina por causa dele. `diagnostico_erros_tcero` o resume.
 - **O texto de IA do próprio tribunal é marcado.** O ePapyrus traz, em cada decisão, um resumo (Fatos/Questão/Regras/Análise/Conclusão) gerado com apoio de IA pelo DEJUR do TCE-RO. A ferramenta o mostra sempre com esse aviso, **nunca** o usa para confirmar uma citação e não o grava como texto do acórdão no recibo.
-- **Aviso de versão nova.** Ao subir, o servidor pergunta ao GitHub qual é a release mais recente. Se houver uma mais nova, a primeira resposta da sessão termina com uma linha avisando, com o endereço da página de releases (fixo no código, nunca tirado da resposta do GitHub). Ele **não baixa nem instala nada** — atualizar é `git pull` na pasta e reiniciar o cliente. Sem internet o aviso não aparece (espera de no máximo 5 segundos, em segundo plano). Para desligar: `TCERO_MCP_SEM_AVISO_ATUALIZACAO=1`.
+- **Aviso de versão nova.** Ao subir, o servidor pergunta ao GitHub qual é a release mais recente. Se houver uma mais nova, a primeira resposta da sessão termina com uma linha avisando, com o endereço da página de releases (fixo no código, nunca tirado da resposta do GitHub). Ele **não baixa nem instala nada** — atualizar é `git pull` na pasta e reiniciar o cliente (Python) ou baixar o `.mcpb` da release e dar dois cliques (Claude Desktop); a linha do aviso traz as duas instruções. Sem internet o aviso não aparece (espera de no máximo 5 segundos, em segundo plano). Para desligar: `TCERO_MCP_SEM_AVISO_ATUALIZACAO=1`.
 - **Quando algo dá errado, a própria mensagem diz o que fazer** — se há versão nova, e como relatar (ver "Reportar erro").
 - **Um arquivo, legível.** Toda a lógica está em [`servidor_tcero.py`](servidor_tcero.py); o `--selftest` roda offline contra respostas reais gravadas em `fixtures/`. Os red teams que auditaram o código, com os achados e o que foi corrigido, estão em [`references/`](references/).
 
@@ -649,6 +803,15 @@ cd /caminho/para/tcero-jurisprudencia-mcp && git pull
 ```
 
 Depois, reinicie o Claude (Code ou Desktop). Se o `pip` de dependências mudou, o README da versão nova diz.
+
+Resumo das duas formas de atualizar (é o que o aviso de versão nova também diz): **Python** = `git pull`
+na pasta do servidor + reiniciar o Claude; **Claude Desktop (`.mcpb`)** = baixar o arquivo da versão
+nova na página de versões e dar dois cliques nele. Uma ferramenta que baixe o `.mcpb` sozinha existe
+no pacote do TJRO (`atualizar_extensao_tjro`) e fica para o porte Node desta extensão.
+
+A versão 1.6.0 acrescenta o arquivo `fundo_vocabulario.json` ao lado do `servidor_tcero.py`
+(usado por `sugerir_termos_tcero`); o `git pull` já o traz. Se ele faltar, a ferramenta ainda funciona,
+só com o contraste dentro da própria resposta do portal.
 
 ## Desinstalar (Python)
 

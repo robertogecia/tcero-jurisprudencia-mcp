@@ -1,0 +1,808 @@
+[
+ {
+  "consulta": 1,
+  "pergunta": "Há precedente do TCE-RO sobre direcionamento/fraude em licitação?",
+  "casadas": 18,
+  "restante": 437,
+  "k": 2,
+  "sugestoes": [
+   "inidoneidade",
+   "pregao",
+   "empresa",
+   "participacao",
+   "edital",
+   "participar",
+   "declaracao",
+   "precos",
+   "certame",
+   "empresas",
+   "competicao",
+   "propostas",
+   "pregao eletronico",
+   "agentes publicos",
+   "regimento interno",
+   "pressupostos admissibilidade"
+  ],
+  "sugestoes_sem_fundo": [
+   "inidoneidade",
+   "participar",
+   "participacao",
+   "declaracao",
+   "empresa",
+   "termos",
+   "empresas",
+   "competicao",
+   "isonomia",
+   "propostas",
+   "pleno",
+   "regimento",
+   "agentes publicos",
+   "regimento interno",
+   "pregao eletronico",
+   "aplicacao multa",
+   "fiscalizacao atos",
+   "atos contratos",
+   "pressupostos admissibilidade"
+  ],
+  "grupo_alvo": 1,
+  "metricas": {
+   "A_base": {
+    "n": 34,
+    "recall_total_gold": 1.0,
+    "recall10_essencial": 0.5,
+    "p10_gold": 0.5,
+    "anot_top10": 7,
+    "anot_total": 7,
+    "anot_n": 7,
+    "grupos": [
+     [
+      "licitação"
+     ],
+     [
+      "direcionamento",
+      "fraude"
+     ]
+    ]
+   },
+   "B3_ou_top3": {
+    "n": 281,
+    "recall_total_gold": 1.0,
+    "recall10_essencial": 0.4,
+    "p10_gold": 0.4,
+    "anot_top10": 2,
+    "anot_total": 7,
+    "anot_n": 7,
+    "grupos": [
+     [
+      "licitação"
+     ],
+     [
+      "direcionamento",
+      "fraude",
+      "inidoneidade",
+      "pregao",
+      "empresa"
+     ]
+    ]
+   },
+   "B5_ou_top5": {
+    "n": 325,
+    "recall_total_gold": 1.0,
+    "recall10_essencial": 0.4,
+    "p10_gold": 0.4,
+    "anot_top10": 3,
+    "anot_total": 7,
+    "anot_n": 7,
+    "grupos": [
+     [
+      "licitação"
+     ],
+     [
+      "direcionamento",
+      "fraude",
+      "inidoneidade",
+      "pregao",
+      "empresa",
+      "participacao",
+      "edital"
+     ]
+    ]
+   },
+   "C3_E_top3": {
+    "n": 29,
+    "recall_total_gold": 0.9,
+    "recall10_essencial": 0.4,
+    "p10_gold": 0.4,
+    "anot_top10": 2,
+    "anot_total": 5,
+    "anot_n": 7,
+    "grupos": [
+     [
+      "licitação"
+     ],
+     [
+      "direcionamento",
+      "fraude"
+     ],
+     [
+      "inidoneidade",
+      "pregao",
+      "empresa"
+     ]
+    ]
+   }
+  }
+ },
+ {
+  "consulta": 2,
+  "pergunta": "Aposentadoria/ato de pessoal questionando tempo de contribuição — o que o TCE-RO já decidiu?",
+  "casadas": 1857,
+  "restante": 3194,
+  "k": 3,
+  "sugestoes": [
+   "idade",
+   "voluntaria",
+   "ofertada",
+   "professor",
+   "ultima",
+   "transicao",
+   "concessorio",
+   "integrais",
+   "previdenciario",
+   "proventos",
+   "redutor",
+   "laborado",
+   "ultima remuneracao",
+   "base ultima",
+   "regra transicao",
+   "atos pessoal",
+   "emenda constitucional",
+   "remuneracao paridade",
+   "considerar legal",
+   "registro concessorio"
+  ],
+  "sugestoes_sem_fundo": [
+   "idade",
+   "voluntaria",
+   "ofertada",
+   "professor",
+   "ultima",
+   "transicao",
+   "integrais",
+   "concessorio",
+   "laborado",
+   "proventos",
+   "previdenciario",
+   "redutor",
+   "ultima remuneracao",
+   "base ultima",
+   "regra transicao",
+   "ingressou servico",
+   "publico ofertada",
+   "remuneracao paridade",
+   "atos pessoal",
+   "emenda constitucional"
+  ],
+  "grupo_alvo": 1,
+  "metricas": {
+   "A_base": {
+    "n": 1909,
+    "recall_total_gold": 1.0,
+    "recall10_essencial": 1.0,
+    "p10_gold": 1.0,
+    "anot_top10": 10,
+    "anot_total": 10,
+    "anot_n": 10,
+    "grupos": [
+     [
+      "aposentadoria"
+     ],
+     [
+      "tempo de contribuição"
+     ]
+    ]
+   },
+   "B3_ou_top3": {
+    "n": 1939,
+    "recall_total_gold": 1.0,
+    "recall10_essencial": 0.7,
+    "p10_gold": 1.0,
+    "anot_top10": 7,
+    "anot_total": 10,
+    "anot_n": 10,
+    "grupos": [
+     [
+      "aposentadoria"
+     ],
+     [
+      "tempo de contribuição",
+      "idade",
+      "voluntaria",
+      "ofertada"
+     ]
+    ]
+   },
+   "B5_ou_top5": {
+    "n": 1950,
+    "recall_total_gold": 1.0,
+    "recall10_essencial": 0.0,
+    "p10_gold": 0.0,
+    "anot_top10": 0,
+    "anot_total": 10,
+    "anot_n": 10,
+    "grupos": [
+     [
+      "aposentadoria"
+     ],
+     [
+      "tempo de contribuição",
+      "idade",
+      "voluntaria",
+      "ofertada",
+      "professor",
+      "ultima"
+     ]
+    ]
+   },
+   "C3_E_top3": {
+    "n": 1836,
+    "recall_total_gold": 1.0,
+    "recall10_essencial": 0.7,
+    "p10_gold": 1.0,
+    "anot_top10": 7,
+    "anot_total": 10,
+    "anot_n": 10,
+    "grupos": [
+     [
+      "aposentadoria"
+     ],
+     [
+      "tempo de contribuição"
+     ],
+     [
+      "idade",
+      "voluntaria",
+      "ofertada"
+     ]
+    ]
+   }
+  }
+ },
+ {
+  "consulta": 3,
+  "pergunta": "Reincidência no descumprimento de determinação do Tribunal — como se dosimetra a multa?",
+  "casadas": 45,
+  "restante": 1155,
+  "k": 2,
+  "sugestoes": [
+   "evitar",
+   "descumprimento",
+   "responsaveis",
+   "dever",
+   "accountability",
+   "expedidas",
+   "regencia",
+   "sancao",
+   "ensejar",
+   "parte",
+   "prazo",
+   "ressalvas",
+   "aplicacao pena",
+   "ressalvas contas",
+   "regular ressalvas",
+   "julgamento regular"
+  ],
+  "sugestoes_sem_fundo": [
+   "evitar",
+   "accountability",
+   "descumprimento",
+   "regencia",
+   "responsaveis",
+   "feito",
+   "expedidas",
+   "comprovacao",
+   "ressalvas",
+   "determinacao",
+   "ensejar",
+   "equilibrio",
+   "ressalvas contas",
+   "aplicacao pena",
+   "prestacao contas",
+   "regular ressalvas",
+   "constitucional administrativo",
+   "julgamento regular",
+   "corte contas",
+   "regimento interno"
+  ],
+  "grupo_alvo": 0,
+  "metricas": {
+   "A_base": {
+    "n": 59,
+    "recall_total_gold": 0.9,
+    "recall10_essencial": 1.0,
+    "p10_gold": 1.0,
+    "anot_top10": 4,
+    "anot_total": 4,
+    "anot_n": 5,
+    "grupos": [
+     [
+      "reincidência"
+     ],
+     [
+      "multa"
+     ]
+    ]
+   },
+   "B3_ou_top3": {
+    "n": 669,
+    "recall_total_gold": 1.0,
+    "recall10_essencial": 0.4,
+    "p10_gold": 0.5,
+    "anot_top10": 1,
+    "anot_total": 5,
+    "anot_n": 5,
+    "grupos": [
+     [
+      "reincidência",
+      "evitar",
+      "descumprimento",
+      "responsaveis"
+     ],
+     [
+      "multa"
+     ]
+    ]
+   },
+   "B5_ou_top5": {
+    "n": 762,
+    "recall_total_gold": 1.0,
+    "recall10_essencial": 0.0,
+    "p10_gold": 0.1,
+    "anot_top10": 0,
+    "anot_total": 5,
+    "anot_n": 5,
+    "grupos": [
+     [
+      "reincidência",
+      "evitar",
+      "descumprimento",
+      "responsaveis",
+      "dever",
+      "accountability"
+     ],
+     [
+      "multa"
+     ]
+    ]
+   },
+   "C3_E_top3": {
+    "n": 55,
+    "recall_total_gold": 0.85,
+    "recall10_essencial": 0.4,
+    "p10_gold": 0.6,
+    "anot_top10": 1,
+    "anot_total": 4,
+    "anot_n": 5,
+    "grupos": [
+     [
+      "reincidência"
+     ],
+     [
+      "multa"
+     ],
+     [
+      "evitar",
+      "descumprimento",
+      "responsaveis"
+     ]
+    ]
+   }
+  }
+ },
+ {
+  "consulta": 4,
+  "pergunta": "Dano ao erário com imputação de débito solidário entre gestores — precedentes?",
+  "casadas": 10,
+  "restante": 5041,
+  "k": 4,
+  "sugestoes": [
+   "deixarem",
+   "reputar",
+   "suportar",
+   "imputacao",
+   "tomada",
+   "insigne",
+   "especial",
+   "idonea",
+   "irregular",
+   "administrador",
+   "pagamentos",
+   "efetuados",
+   "contas especial",
+   "tomada contas",
+   "devendo suportar",
+   "pessoa juridica",
+   "acordao relativo",
+   "administrador deram",
+   "comprovar regularidade",
+   "consequente imputacao"
+  ],
+  "sugestoes_sem_fundo": [
+   "reputar",
+   "suportar",
+   "deixarem",
+   "imputacao",
+   "insigne",
+   "idonea",
+   "tomada",
+   "administrador",
+   "irregular",
+   "especial",
+   "pagamentos",
+   "efetuados",
+   "devendo suportar",
+   "acordao relativo",
+   "administrador deram",
+   "deixarem prestar",
+   "relativo processo",
+   "relatoria insigne",
+   "contas especial",
+   "tomada contas"
+  ],
+  "grupo_alvo": 1,
+  "metricas": {
+   "A_base": {
+    "n": 72,
+    "recall_total_gold": 1.0,
+    "recall10_essencial": 0.3,
+    "p10_gold": 0.6,
+    "anot_top10": 8,
+    "anot_total": 12,
+    "anot_n": 12,
+    "grupos": [
+     [
+      "débito"
+     ],
+     [
+      "solidário",
+      "solidária",
+      "solidariedade"
+     ]
+    ]
+   },
+   "B3_ou_top3": {
+    "n": 73,
+    "recall_total_gold": 1.0,
+    "recall10_essencial": 0.3,
+    "p10_gold": 0.6,
+    "anot_top10": 8,
+    "anot_total": 12,
+    "anot_n": 12,
+    "grupos": [
+     [
+      "débito"
+     ],
+     [
+      "solidário",
+      "solidária",
+      "solidariedade",
+      "deixarem",
+      "reputar",
+      "suportar"
+     ]
+    ]
+   },
+   "B5_ou_top5": {
+    "n": 341,
+    "recall_total_gold": 1.0,
+    "recall10_essencial": 0.4,
+    "p10_gold": 0.7,
+    "anot_top10": 9,
+    "anot_total": 12,
+    "anot_n": 12,
+    "grupos": [
+     [
+      "débito"
+     ],
+     [
+      "solidário",
+      "solidária",
+      "solidariedade",
+      "deixarem",
+      "reputar",
+      "suportar",
+      "imputacao",
+      "tomada"
+     ]
+    ]
+   },
+   "C3_E_top3": {
+    "n": 4,
+    "recall_total_gold": 0.15,
+    "recall10_essencial": 0.0,
+    "p10_gold": 0.3,
+    "anot_top10": 4,
+    "anot_total": 4,
+    "anot_n": 12,
+    "grupos": [
+     [
+      "débito"
+     ],
+     [
+      "solidário",
+      "solidária",
+      "solidariedade"
+     ],
+     [
+      "deixarem",
+      "reputar",
+      "suportar"
+     ]
+    ]
+   }
+  }
+ },
+ {
+  "consulta": 5,
+  "pergunta": "Contratação temporária de servidor sem concurso público — o TCE-RO já se pronunciou?",
+  "casadas": 16,
+  "restante": 2600,
+  "k": 3,
+  "sugestoes": [
+   "seletivo",
+   "simplificado",
+   "edital",
+   "pronuncia",
+   "nulidade",
+   "excepcional",
+   "ilegal",
+   "vagas",
+   "contratos",
+   "necessidade",
+   "interesse",
+   "seletivos",
+   "processo seletivo",
+   "edital processo",
+   "interesse publico",
+   "considerar ilegal",
+   "processos seletivos",
+   "atos contratos",
+   "seguranca juridica",
+   "administracao publica"
+  ],
+  "sugestoes_sem_fundo": [
+   "seletivo",
+   "simplificado",
+   "edital",
+   "pronuncia",
+   "nulidade",
+   "excepcional",
+   "necessidade",
+   "contratos",
+   "ilegal",
+   "vagas",
+   "interesse",
+   "certame",
+   "processo seletivo",
+   "edital processo",
+   "interesse publico",
+   "atos contratos",
+   "considerar ilegal",
+   "processos seletivos",
+   "administracao publica",
+   "seguranca juridica"
+  ],
+  "grupo_alvo": 0,
+  "metricas": {
+   "A_base": {
+    "n": 42,
+    "recall_total_gold": 1.0,
+    "recall10_essencial": 1.0,
+    "p10_gold": 1.0,
+    "anot_top10": 0,
+    "anot_total": 3,
+    "anot_n": 7,
+    "grupos": [
+     [
+      "temporária"
+     ],
+     [
+      "servidor"
+     ]
+    ]
+   },
+   "B3_ou_top3": {
+    "n": 200,
+    "recall_total_gold": 1.0,
+    "recall10_essencial": 0.4,
+    "p10_gold": 0.5,
+    "anot_top10": 4,
+    "anot_total": 5,
+    "anot_n": 7,
+    "grupos": [
+     [
+      "temporária",
+      "seletivo",
+      "simplificado",
+      "edital"
+     ],
+     [
+      "servidor"
+     ]
+    ]
+   },
+   "B5_ou_top5": {
+    "n": 241,
+    "recall_total_gold": 1.0,
+    "recall10_essencial": 0.0,
+    "p10_gold": 0.2,
+    "anot_top10": 4,
+    "anot_total": 5,
+    "anot_n": 7,
+    "grupos": [
+     [
+      "temporária",
+      "seletivo",
+      "simplificado",
+      "edital",
+      "pronuncia",
+      "nulidade"
+     ],
+     [
+      "servidor"
+     ]
+    ]
+   },
+   "C3_E_top3": {
+    "n": 3,
+    "recall_total_gold": 0.05,
+    "recall10_essencial": 0.0,
+    "p10_gold": 0.1,
+    "anot_top10": 3,
+    "anot_total": 3,
+    "anot_n": 7,
+    "grupos": [
+     [
+      "temporária"
+     ],
+     [
+      "servidor"
+     ],
+     [
+      "seletivo",
+      "simplificado",
+      "edital"
+     ]
+    ]
+   }
+  }
+ },
+ {
+  "consulta": 6,
+  "pergunta": "Obra pública paralisada/em atraso — há precedente de responsabilização?",
+  "casadas": 14,
+  "restante": 354,
+  "k": 2,
+  "sugestoes": [
+   "contrato",
+   "contratual",
+   "gestor",
+   "empresa",
+   "basico",
+   "projeto",
+   "adequada",
+   "atribuida",
+   "rescisao",
+   "atribuicao",
+   "descumprimento",
+   "ordem",
+   "multa contratual",
+   "aplicacao multa",
+   "atos contratos"
+  ],
+  "sugestoes_sem_fundo": [
+   "gestor",
+   "demonstrada",
+   "adequada",
+   "atribuida",
+   "contratual",
+   "atribuicao",
+   "contrato",
+   "ordem",
+   "descumprimento",
+   "basico",
+   "fiscalizacao",
+   "inconsistencias",
+   "multa contratual",
+   "projeto basico",
+   "aplicacao multa",
+   "fiscalizacao atos",
+   "atos contratos",
+   "corte contas"
+  ],
+  "grupo_alvo": 1,
+  "metricas": {
+   "A_base": {
+    "n": 20,
+    "recall_total_gold": 0.667,
+    "recall10_essencial": 0.9,
+    "p10_gold": 1.0,
+    "anot_top10": 7,
+    "anot_total": 7,
+    "anot_n": 8,
+    "grupos": [
+     [
+      "obra"
+     ],
+     [
+      "atraso"
+     ]
+    ]
+   },
+   "B3_ou_top3": {
+    "n": 137,
+    "recall_total_gold": 0.667,
+    "recall10_essencial": 0.5,
+    "p10_gold": 0.7,
+    "anot_top10": 5,
+    "anot_total": 8,
+    "anot_n": 8,
+    "grupos": [
+     [
+      "obra"
+     ],
+     [
+      "atraso",
+      "contrato",
+      "contratual",
+      "gestor"
+     ]
+    ]
+   },
+   "B5_ou_top5": {
+    "n": 158,
+    "recall_total_gold": 0.667,
+    "recall10_essencial": 0.4,
+    "p10_gold": 0.6,
+    "anot_top10": 3,
+    "anot_total": 8,
+    "anot_n": 8,
+    "grupos": [
+     [
+      "obra"
+     ],
+     [
+      "atraso",
+      "contrato",
+      "contratual",
+      "gestor",
+      "empresa",
+      "basico"
+     ]
+    ]
+   },
+   "C3_E_top3": {
+    "n": 19,
+    "recall_total_gold": 0.611,
+    "recall10_essencial": 0.5,
+    "p10_gold": 0.7,
+    "anot_top10": 5,
+    "anot_total": 6,
+    "anot_n": 8,
+    "grupos": [
+     [
+      "obra"
+     ],
+     [
+      "atraso"
+     ],
+     [
+      "contrato",
+      "contratual",
+      "gestor"
+     ]
+    ]
+   }
+  }
+ }
+]

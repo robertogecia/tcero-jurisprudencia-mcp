@@ -1,4 +1,4 @@
-# Harness — servidor_tcero.py (estado em 22/09/2026)
+# Harness — servidor_tcero.py (estado em 22/09/2026; v1.6.0 em 15/10/2026, ver o fim)
 
 Padrão do harness do TJSE (`~/MCP/tjse-jurisprudencia/harness/`): gabarito montado CEGO à
 implementação (regex Python direto sobre ementa+`acordaoDescricao`, nunca usando
@@ -76,3 +76,10 @@ não muda o conjunto).
 - N=18 no fecho×cadastro é maior que o N=4 anterior, mas ainda pequeno para uma conclusão
   definitiva sobre a confiabilidade geral do cadastro do TCE-RO — 0 divergências não prova que
   não existam, só que não apareceram nesta amostra.
+
+## v1.6.0 (15/10/2026) — sugerir_termos_tcero
+
+- `harness/gerar_fundo.py` — gera `fundo_vocabulario.json` (ao lado do servidor): df de palavras (>= 3) e de pares de palavras adjacentes (>= 5) sobre as 5.052 decisões do snapshot, com a mesma tokenização do servidor (`_tokens_vocab`). É dado de runtime de `sugerir_termos_tcero`.
+- `harness/medir_sugestoes.py` — mede as sugestões sobre as 6 consultas do `gold.json` (mock do OU nativo de `medir.py`, zero rede), em quatro formas de `grupos` (A base; B3/B5 = + 3/5 sugestões em OU no grupo mais estreito; C3 = + 3 como grupo E), contra o gold (circular) e contra a anotação independente de `references/red-team-2026-09-22b/anotacao.json`. O fundo é refeito sem as decisões casadas de cada consulta. Saída: `harness/_resultado_sugestoes.json` e `harness/medicao-sugerir-termos-2026-10-15.md` (números, protocolo e limites).
+- Conclusão registrada: as sugestões ampliam o conjunto (43 → 47 de 49 anotados), mas coladas em bloco derrubam o topo (36 → 27 de 47). **Não declarado como ganho de busca.** Falta rotulagem cega e dupla de amostra nova.
+- Rede desta rodada (smoke de cada ferramenta nova): 4 requisições, registradas em `harness/_log_rede.json` (itens 31 a 34).

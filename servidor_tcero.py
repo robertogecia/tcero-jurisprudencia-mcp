@@ -13,7 +13,7 @@ SEM captcha — confirmado ao vivo com curl puro em 13/09/2026 (ver references/p
 para o levantamento completo). Diferença importante em relação aos irmãos: aqui não há
 sessão/ViewState (TRF1) nem desafio anti-robô (TJRO) para contornar — é uma API JSON simples.
 
-Expõe quatro ferramentas ao Claude:
+Expõe oito ferramentas ao Claude (as quatro primeiras são as originais; as quatro seguintes, da v1.6.0):
   • buscar_jurisprudencia_tcero — busca livre e/ou por campo; `grupos` (E entre grupos, OU
                                   dentro do grupo) filtra por 2+ conceitos NO CLIENTE — o portal
                                   só sabe fazer OU e ordena por data, não por relevância
@@ -29,6 +29,11 @@ Expõe quatro ferramentas ao Claude:
                                   humana no navegador (ver seção dedicada no README)
   • verificar_citacao_tcero     — confere se um trecho aparece literalmente na ementa/dispositivo
   • diagnostico_ritmo_tcero     — estado do disjuntor/limitador, sem rede
+  • buscar_recibos_tcero        — v1.6.0: busca SEM REDE nos recibos locais (o que já foi lido)
+  • diagnostico_erros_tcero     — v1.6.0: resume o diário local de falhas (sem rede, sem dado do caso)
+  • linha_do_tempo_tcero        — v1.6.0: contagem por ano e por órgão sobre UMA consulta
+  • sugerir_termos_tcero        — v1.6.0: palavras/pares distintivos das ementas que casaram, para `grupos`
+  (e `obter_acordao_tcero(modo="triagem")` — leitura barata para decidir se vale ler)
 
 Problema estrutural a resolver, dito com todas as letras: a API `/api/espelho/buscar` NÃO
 pagina no servidor — uma busca ampla já devolve múltiplos megabytes de JSON (confirmado ao
@@ -44,12 +49,14 @@ import asyncio
 import contextlib
 import html as _html
 import json
+import math
 import os
 import re
 _RE_ESPACOS_PY = re.compile(r"[ \t\n\r\f\v]+")   # fora da f-string: barra invertida na expressão só vale no Python 3.12+ (CI 3.10, 07/10/2026)
 import sys
 import time
 import unicodedata
+from collections import Counter
 from typing import Any
 
 try:
@@ -116,7 +123,7 @@ HEADERS_BASE = {
 # Primeiro release com recibo de custódia + alertas de atribuição (itens 1-5  #
 # desta rodada): 1.0.x é o que já está publicado; 1.1.0 é este.               #
 # --------------------------------------------------------------------------- #
-VERSAO = "1.5.1"
+VERSAO = "1.6.0"
 RELEASES_API = "https://api.github.com/repos/robertogecia/tcero-jurisprudencia-mcp/releases/latest"
 RELEASES_PAGINA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest"
 ISSUES_NOVA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/issues/new"
@@ -201,7 +208,7 @@ def _linha_aviso_versao() -> str | None:
         except RuntimeError:
             pass  # sem event loop rodando (ex.: chamada síncrona de teste) — sem checagem
     if _versao_nova_cache:
-        return f"⬆️ Há versão nova (v{_versao_nova_cache}): {RELEASES_PAGINA}"
+        return f"⬆️ Há versão nova (v{_versao_nova_cache}): {RELEASES_PAGINA}. {COMO_ATUALIZAR}"
     return None
 
 
@@ -292,7 +299,7 @@ def _rodape_erro(mensagem: str) -> str:
     _linha_aviso_versao()  # dispara a checagem em 2º plano se ainda não começou
     if _versao_nova_cache:
         partes.append(
-            f"Há versão nova (v{_versao_nova_cache}) e ela pode já corrigir este problema: {RELEASES_PAGINA}"
+            f"Há versão nova (v{_versao_nova_cache}) e ela pode já corrigir este problema: {RELEASES_PAGINA}. {COMO_ATUALIZAR}"
         )
     if tipo not in SEM_RELATO_TIPOS:
         sufixo = " (depois de atualizar, se houver versão nova)" if _versao_nova_cache else ""
@@ -1419,14 +1426,32 @@ _RE_OBITER = re.compile(r"(?<![a-z0-9])(?:ainda que assim nao fosse|se assim nao
 _OBITER_JANELA, _OBITER_CABECA = 400, 0.4
 
 
-def _obiter_antes(tn: str, ini0: int, fim: int, bruto: str):
+def _obiter_antes_com_pos(tn: str, ini0: int, fim: int, bruto: str):
+    """v1.6.0: além da marca, ONDE ela está (posições no texto bruto: `tn` é de `_norm1`, 1 caractere →
+    1 caractere), para o alerta mostrar a frase e não só a marca. Devolve (marca, inicio_da_frase,
+    posicao_da_marca) ou None."""
     cabeca = ini0 + int((fim - ini0) * _OBITER_CABECA)
     piso = max(0, ini0 - _OBITER_JANELA)
     frase0 = _inicio_da_frase(bruto, tn, piso, cabeca)
     m = None
     for x in _RE_OBITER.finditer(tn[frase0:cabeca]):
         m = x
-    return m.group(0) if m else None
+    return (m.group(0), frase0, frase0 + m.start()) if m else None
+
+
+def _obiter_antes(tn: str, ini0: int, fim: int, bruto: str):
+    r = _obiter_antes_com_pos(tn, ini0, fim, bruto)
+    return r[0] if r else None
+
+
+def _frase_do_obiter(bruto: str, de: int, pos: int, ini0: int) -> str:
+    """A frase onde está a marca de obiter, do começo da marca (com 40 caracteres antes) até o trecho; se a
+    marca já está na cabeça do próprio trecho, diz isso. Mesma redação do TJRO v1.33."""
+    if pos >= ini0:
+        return " A marca está no começo do próprio trecho citado."
+    ini = max(de, pos - 40)
+    f = _RE_ESPACOS_PY.sub(" ", bruto[ini:ini0]).strip()
+    return f" A frase: «{f[:260] + '…' if len(f) > 260 else f}» + o trecho."
 
 
 # ---- POSIÇÃO NO JULGADO (06/10/2026, bloco genérico do TJSE/TJRO; disp_ini = dispositivo por cabeçalho) ----
@@ -1587,7 +1612,11 @@ def _posicao_tcero(bruto: str, meio: int) -> str:
         segs.append((p, f, dono)); dono_ant = dono
     rel_seg = next(((a, b) for a, b, d in segs if d == "relatorio" and a <= meio < b), None) or next(((a, b) for a, b, d in segs if d == "relatorio"), None)
     votos = [(a, b) for a, b, d in segs if d == "relator"]
-    outros = [(a, b, "VOTO de outro conselheiro") for a, b, d in segs if d == "outro"]
+    # v1.6.0: o título do voto (linha do cabeçalho) diz de QUEM é e onde ele começa
+    def _titulo_voto(p):
+        k = bruto.find("\n", p)
+        return _RE_ESPACOS_PY.sub(" ", bruto[p:k if k >= 0 else n]).strip()[:80]
+    outros = [(a, b, f"VOTO de outro conselheiro (título: «{_titulo_voto(a)}»)") for a, b, d in segs if d == "outro"]
     rel = rel_seg[0] if rel_seg else -1
     voto = votos[0][0] if votos else -1
     # dispositivo: o ÚLTIMO título DISPOSITIVO do voto (os anteriores costumam estar em decisão transcrita) ou a ÚLTIMA fórmula
@@ -1621,9 +1650,35 @@ def _posicao_tcero(bruto: str, meio: int) -> str:
                              disp_ini=disp if disp >= 0 else None)
 
 
-def _posicao_tcero_trecho(texto: str, alvo: str, inicio: int, fragmentos: list[str]) -> str:
+def _meio_do_trecho(texto: str, alvo: str, inicio: int, fragmentos: list[str]) -> int | None:
     fx = _faixa_norm(_norm1(texto), fragmentos, inicio / max(1, len(alvo))) if texto else None
-    return _posicao_tcero(texto, (fx[0] + fx[1]) // 2) if fx else ""
+    return (fx[0] + fx[1]) // 2 if fx else None
+
+
+def _posicao_tcero_trecho(texto: str, alvo: str, inicio: int, fragmentos: list[str]) -> str:
+    meio = _meio_do_trecho(texto, alvo, inicio, fragmentos)
+    return _posicao_tcero(texto, meio) if meio is not None else ""
+
+
+_RE_NUM_PAGINA_TC = re.compile(r"(?m)^[ \t]*(\d{1,4})[ \t]+de[ \t]+(\d{1,4})[ \t]*$")
+
+
+def _pagina_pdf_tcero(bruto: str, pos: int) -> str:
+    """Página APROXIMADA do PDF em que cai a posição `pos` do texto bruto do recibo ("p. ~7 de 23 do PDF"),
+    lida do cabeçalho de página que o TCE-RO repete em toda folha ("N de M", dentro do bloco "TRIBUNAL DE
+    CONTAS…"). Vazia antes do primeiro cabeçalho (ementa/dispositivo do cadastro) ou se o texto não traz
+    cabeçalhos. Aproximada: o texto de uma página começa no cabeçalho dela, então a página é a do último
+    cabeçalho anterior a `pos`."""
+    if not bruto or pos < 0:
+        return ""
+    ultima = None
+    for m in _RE_PAGINA_TC.finditer(bruto):
+        if m.start() > pos:
+            break
+        mn = _RE_NUM_PAGINA_TC.search(bruto, m.start(), m.end())
+        if mn:
+            ultima = (int(mn.group(1)), int(mn.group(2)))
+    return f"p. ~{ultima[0]} de {ultima[1]} do PDF" if ultima else ""
 
 
 def _alertas_atribuicao(alvo_norm: str, inicio: int, fim: int, bruto: str | None = None, fragmentos: list[str] | None = None) -> list[str]:
@@ -1684,13 +1739,19 @@ def _alertas_atribuicao(alvo_norm: str, inicio: int, fim: int, bruto: str | None
             "quem é a frase antes de atribuí-la ao TCE-RO."
         )
     if fx is not None and not entre and not any(a.startswith("TRANSCRIÇÃO") or a.startswith("PARECER") for a in alertas):
-        ob = _obiter_antes(nt1, fx[0], fx[1], bruto)
+        ob = _obiter_antes_com_pos(nt1, fx[0], fx[1], bruto)
         if ob:
             alertas.append(
-                f"OBITER DICTUM?: o trecho vem sob «{ob}» — raciocínio hipotético ou fundamento alternativo; o resultado do "
+                f"OBITER DICTUM?: o trecho vem sob «{ob[0]}» — raciocínio hipotético ou fundamento alternativo; o resultado do "
                 "julgado não dependeu dele. Vale como reforço, não como ratio decidendi; cite dizendo que é obiter."
+                + _frase_do_obiter(bruto, ob[1], ob[2], fx[0])
             )
     return alertas
+
+
+def _pagina_do_trecho(texto: str, alvo: str, inicio: int, fragmentos: list[str]) -> str:
+    meio = _meio_do_trecho(texto, alvo, inicio, fragmentos)
+    return _pagina_pdf_tcero(texto, meio) if meio is not None else ""
 
 
 def _verificar_trecho(textos: dict[str, str], trecho: str) -> dict:
@@ -1738,6 +1799,7 @@ def _verificar_trecho(textos: dict[str, str], trecho: str) -> dict:
                 "motivo": f"trecho encontrado literalmente em: {nome}",
                 "alertas": _alertas_atribuicao(alvo, inicio, fim, texto, fragmentos),
                 "posicao": _posicao_tcero_trecho(texto, alvo, inicio, fragmentos),
+                "pagina": _pagina_do_trecho(texto, alvo, inicio, fragmentos),
             }
         faltando_por_texto[nome] = faltando
     if not houve_texto:
@@ -1853,8 +1915,8 @@ def _fim_da_voz(texto: str, ini: int, janela: int) -> int:
     return m.start() + 1
 
 
-def _excertos_raw(texto: str, regex: re.Pattern, janela: int = _JANELA_EXCERTO_RAW,
-                   teto: int = _TETO_EXCERTOS_POR_CAMPO) -> list[str]:
+def _excertos_raw_com_pos(texto: str, regex: re.Pattern, janela: int = _JANELA_EXCERTO_RAW,
+                         teto: int = _TETO_EXCERTOS_POR_CAMPO) -> list[tuple[int, str]]:
     """Um excerto por ocorrência do gatilho (deduplicado por posição de início), texto BRUTO
     (não normalizado), cortado em `janela` caracteres. Heurística de janela fixa, não de frase —
     documentado como tal; serve para o lint conferir se um trecho citado cai dentro de uma
@@ -1873,7 +1935,7 @@ def _excertos_raw(texto: str, regex: re.Pattern, janela: int = _JANELA_EXCERTO_R
         if k:
             contagem[k] = contagem.get(k, 0) + 1
     repetidas = {k for k, n in contagem.items() if n >= 3 and len(k) >= 12}
-    saida: list[str] = []
+    saida: list[tuple[int, str]] = []
     vistos: set[int] = set()
     vistos_txt: set[str] = set()
     for m in regex.finditer(texto):
@@ -1890,10 +1952,16 @@ def _excertos_raw(texto: str, regex: re.Pattern, janela: int = _JANELA_EXCERTO_R
         if exc in vistos_txt:  # mesmo excerto repetido (ementa copiada no PDF): 1 só
             continue
         vistos_txt.add(exc)
-        saida.append(exc)
+        saida.append((ini, exc))
         if len(saida) >= teto:
             break
     return saida
+
+
+def _excertos_raw(texto: str, regex: re.Pattern, janela: int = _JANELA_EXCERTO_RAW,
+                  teto: int = _TETO_EXCERTOS_POR_CAMPO) -> list[str]:
+    """Os excertos de `_excertos_raw_com_pos`, sem a posição (é o que o recibo grava; inalterado)."""
+    return [e for _p, e in _excertos_raw_com_pos(texto, regex, janela, teto)]
 
 
 def _gravar_recibo_tcero(s: dict, texto_pdf: str | None = None, texto_pdf_completo: bool | None = None,
@@ -3050,7 +3118,9 @@ async def _buscar(texto_livre: str | None, numero_acordao: str | None, numero_pr
 
 
 async def _obter_acordao(id_decisao: int | str | None, numero_acordao: str | None, numero_processo: str | None,
-                          ler_inteiro_teor: bool = False) -> str:
+                          ler_inteiro_teor: bool = False, modo: str = "completo") -> str:
+    if modo not in ("completo", "triagem"):
+        return f"modo inválido: {modo!r}; use 'completo' ou 'triagem'. Nenhuma requisição foi feita."
     # `_texto` no lugar de `if x`: com "   " o teste antigo passava e o filtro ia VAZIO para o
     # portal, que responde com o acervo inteiro (red team 13/09/2026, achado 2).
     id_txt, ac_txt, proc_txt = _texto(id_decisao), _texto(numero_acordao), _texto(numero_processo)
@@ -3098,6 +3168,20 @@ async def _obter_acordao(id_decisao: int | str | None, numero_acordao: str | Non
             )
         linhas.append("\nChame de novo com obter_acordao_tcero(id_decisao=<id acima>) para o detalhe de cada um. Mostrando o primeiro:")
     s0 = (resultados[0].get("source") or {})
+    if modo == "triagem":
+        # v1.6.0: leitura barata. O recibo gravado é EXATAMENTE o que o modo completo gravaria (mesmo
+        # caminho de download/cache e mesmas chamadas): a triagem não rebaixa nem promove a verificação.
+        resultado_pdf, aviso_pdf = None, None
+        if ler_inteiro_teor:
+            resultado_pdf, aviso_pdf = await _pdf_para_triagem(s0)
+            texto_pdf, pdf_completo = await _texto_pdf_para_recibo(s0)
+            _gravar_recibo_tcero(s0, texto_pdf=texto_pdf, texto_pdf_completo=pdf_completo)
+            bruto_pdf = _texto_do_recibo(s0, texto_pdf) if resultado_pdf is not None else None
+        else:
+            _gravar_recibo_tcero(s0)
+            bruto_pdf = None
+        linhas.extend(_triagem_decisao(s0, bruto_pdf, resultado_pdf, aviso_pdf))
+        return "\n".join(_cortar_bloco(linhas, ORCAMENTO_SAIDA, "triagem de obter_acordao"))
     linhas.extend(_detalhe_item(s0))
     if ler_inteiro_teor:
         # Só a PRIMEIRA decisão (s0) — quando há mais de uma sob o mesmo número, o detalhe
@@ -3165,7 +3249,7 @@ def _linhas_verificacao_item(s: dict, trecho: str, textos: dict[str, str]) -> li
         for a in r["alertas"]:
             linhas.append(f"   ⚠️ trecho literal, porém atribuído a outra voz — conferir se é a posição da Corte: {a}")
     if r["valido"] and r.get("posicao"):
-        linhas.append(f"   ℹ POSIÇÃO NO JULGADO: {r['posicao']}.")
+        linhas.append(f"   ℹ POSIÇÃO NO JULGADO: {r['posicao']}" + (f" ({r['pagina']})" if r.get("pagina") else "") + ".")
     if not r["valido"] and r["faltando"]:
         for f in r["faltando"][:3]:
             linhas.append(f"   fragmento sem correspondência: «{_uma_linha(f)[:160]}»")
@@ -3245,6 +3329,1095 @@ async def _verificar_citacao(id_decisao: int | str | None, numero_acordao: str |
         "não ser a posição da Corte — ver a linha de alerta."
     )
     return "\n".join(_cortar_bloco(linhas, ORCAMENTO_SAIDA, "resposta de verificar_citacao")) + rodape
+
+
+# --------------------------------------------------------------------------- #
+# v1.6.0 (15/10/2026) — porte das ideias do TJRO v1.25-v1.34 para o TCE-RO:    #
+# buscar_recibos_tcero · diário de erros · linha_do_tempo_tcero ·              #
+# sugerir_termos_tcero · modo triagem. Funções PURAS (texto → texto) separadas #
+# da rede, com strings de saída estáveis, porque o pacote Node (.mcpb) é porte #
+# deste arquivo e será atualizado depois — mudar uma frase aqui é mudar lá.    #
+# --------------------------------------------------------------------------- #
+import datetime as _dt
+
+COMO_ATUALIZAR = (
+    "Atualizar: instalação pelo Python = `git pull` na pasta do servidor e reiniciar o Claude; "
+    "instalação pelo Claude Desktop (.mcpb) = baixar o arquivo da versão nova na página de versões e "
+    "dar dois cliques nele."
+)
+
+
+# ---- diário de erros (item 2) ------------------------------------------------ #
+MAX_LINHAS_ERROS = 500
+MAX_BYTES_ERROS = 400_000
+
+
+def _dir_estado() -> str:
+    """Pasta de estado do usuário: `TCERO_MCP_DIR_ESTADO` se existir; senão `~/.tcero-jurisprudencia`."""
+    return os.environ.get("TCERO_MCP_DIR_ESTADO") or os.path.join(os.path.expanduser("~"), ".tcero-jurisprudencia")
+
+
+def _arquivo_erros() -> str:
+    return os.path.join(_dir_estado(), "erros.jsonl")
+
+
+_RE_URL_ERRO = re.compile(r"https?://[^\s)\"'<>]+")
+_RE_ASPAS_ERRO = re.compile(r"[\"“”«»][^\"“”«»]{3,}[\"“”«»]|'[^']{3,}'")
+_RE_NUM_BARRA_ERRO = re.compile(r"\b\d{1,9}/\d{2,4}\b")
+_RE_NUM_LONGO_ERRO = re.compile(r"\b\d{5,}\b")
+_RE_EMAIL_ERRO = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+
+
+def _url_para_erro(m) -> str:
+    """URL sem consulta nem fragmento e sem segmento longo de caminho (o hash de AbrirPdfConvidado
+    identifica o acórdão que o usuário estava lendo)."""
+    u = m.group(0).split("?")[0].split("#")[0]
+    partes = u.split("/")
+    return "/".join(("<id>" if i >= 3 and len(p) >= 16 else p) for i, p in enumerate(partes))
+
+
+def _sanitizar_erro(texto, maximo: int = 300) -> str:
+    """Mensagem curta SEM dado do caso: URL só com origem e caminho curto; trecho entre aspas vira «…»;
+    número de processo/acórdão (NNNNN/AA), ids longos e e-mails somem. O texto da busca do usuário nunca
+    é argumento desta função (quem registra passa só a mensagem do erro)."""
+    t = str(texto if texto is not None else "")
+    t = _RE_URL_ERRO.sub(_url_para_erro, t)
+    t = _RE_ASPAS_ERRO.sub("«…»", t)
+    t = _RE_EMAIL_ERRO.sub("<email>", t)
+    t = _RE_NUM_BARRA_ERRO.sub("<nº>", t)
+    t = _RE_NUM_LONGO_ERRO.sub("<nº>", t)
+    return _RE_ESPACOS_PY.sub(" ", t).strip()[:maximo]
+
+
+_ARGS_SEGUROS_ERRO = {"modo", "ordenar", "pagina", "por_pagina", "limite", "ano_inicio", "ano_fim",
+                      "ler_inteiro_teor", "detalhar", "dias", "relatorio"}
+
+
+def _descrever_args(args: dict | None) -> dict:
+    """Parâmetros SEM conteúdo: presença/tamanho; valor só para enumerações e números seguros."""
+    out: dict[str, Any] = {}
+    for k, v in (args or {}).items():
+        if v is None or v == "" or v == []:
+            continue
+        if k in _ARGS_SEGUROS_ERRO and isinstance(v, (bool, int, float)):
+            out[k] = v
+        elif k in _ARGS_SEGUROS_ERRO and isinstance(v, str):
+            out[k] = _sanitizar_erro(v, 30)
+        elif isinstance(v, list):
+            out[k] = (f"{len(v)} grupo(s), {sum(len(g) for g in v if isinstance(g, list))} termo(s)"
+                      if isinstance(v[0], list) else f"{len(v)} item(ns)")
+        elif isinstance(v, str):
+            out[k] = f"<texto: {len(v)} car.>"
+        else:
+            out[k] = type(v).__name__
+    return out
+
+
+def _tipo_do_erro_diario(mensagem: str) -> str:
+    """Tipo do erro para o diário: os de PDF e de formato primeiro (não existem em `_tipo_do_erro`), depois
+    os de rede/portal que a extensão já classificava."""
+    m = str(mensagem or "")
+    if re.search(r"PDF sem texto extra[ií]vel", m):
+        return "pdf_sem_texto"
+    if re.search(r"EXTRA[ÇC][ÃA]O PARCIAL", m):
+        return "pdf_parcial"
+    if re.search(r"LEITURA DE PDF N[ÃA]O REALIZADA", m):
+        return "pdf_falha"
+    if re.search(r"formato inesperado|n[ãa]o [eé] JSON v[aá]lido|n[ãa]o devolveu uma lista|mudado de layout", m, re.I):
+        return "formato_inesperado"
+    if re.search(r"n[ãa]o instalado", m):
+        return "dependencia_ausente"
+    if re.search(r"\b(?:ReadTimeout|WriteTimeout|PoolTimeout|TimeoutError)\b", m):
+        return "timeout"
+    return _tipo_do_erro(m)
+
+
+_RE_FALHA_NA_SAIDA = re.compile(r"\[(?:LEITURA DE PDF|PESQUISA|BUSCA LOCAL) N[ÃA]O REALIZADA|\[PESQUISA INCOMPLETA")
+_RE_PARCIAL_NA_SAIDA = re.compile(r"\[VERIFICA[ÇC][ÃA]O N[ÃA]O REALIZADA\]|\[EXTRA[ÇC][ÃA]O PARCIAL|PDF sem texto extra[ií]vel")
+
+
+def _falha_na_saida(texto: str) -> str | None:
+    """Reconhece, no TEXTO que a ferramenta devolveu, uma falha ("falha") ou uma limitação parcial
+    ("parcial") que merece linha no diário. Erro de validação de entrada do usuário (sem rodapé de
+    portal) não é falha de ferramenta."""
+    t = str(texto or "")
+    if _RE_FALHA_NA_SAIDA.search(t):
+        return "falha"
+    if t.startswith("Erro ") and ("\nVersão: " in t or t.startswith("Erro ao consultar o portal do TCE-RO (")):
+        return "falha"
+    if _RE_PARCIAL_NA_SAIDA.search(t):
+        return "parcial"
+    return None
+
+
+def _linha_da_falha(texto: str) -> str:
+    """A linha curta que descreve a falha dentro de uma saída maior (sem o rodapé de versão/relato)."""
+    t = str(texto or "").split("\n\nVersão:")[0]
+    for padrao in (_RE_FALHA_NA_SAIDA, _RE_PARCIAL_NA_SAIDA):
+        m = padrao.search(t)
+        if m:
+            ini = t.rfind("\n", 0, m.start()) + 1
+            fim = t.find("\n", m.start())
+            return t[ini:fim if fim >= 0 else len(t)]
+    return t.split("\n", 1)[0]
+
+
+def _registrar_erro(ferramenta: str, erro: BaseException | None = None, texto: str | None = None,
+                    args: dict | None = None, ms: int | None = None, parcial: bool = False,
+                    agora: float | None = None) -> dict | None:
+    """Anota UMA linha em `erros.jsonl` — só dado técnico (ferramenta, tipo, mensagem curta sanitizada, versão,
+    sistema, data, parâmetros sem conteúdo). NUNCA o texto da busca nem trecho citado. Jamais lança: o diário
+    não pode quebrar uma ferramenta."""
+    try:
+        msg = f"{type(erro).__name__}: {erro}" if erro is not None else _linha_da_falha(texto or "")
+        tipo = _tipo_do_erro_diario(msg)
+        if tipo in SEM_RELATO_TIPOS:
+            return None  # limitador auto-imposto: o usuário resolve esperando
+        agora = time.time() if agora is None else agora
+        try:
+            limitador = _estado_limitador_resumo(agora)
+        except Exception:
+            limitador = "indisponível"
+        mh = re.match(r".*?\bHTTP (\d{3})\b", msg, re.S)
+        entrada = {
+            "quando": _dt.datetime.fromtimestamp(agora, _dt.timezone.utc).isoformat(timespec="seconds"),
+            "versao": VERSAO,
+            "sistema": f"{platform.system()} {platform.release()} python {platform.python_version()}",
+            "ferramenta": ferramenta,
+            "tipo": tipo,
+            "http": mh.group(1) if mh else None,
+            "parcial": bool(parcial),
+            "ms": ms,
+            "args": _descrever_args(args),
+            "limitador": limitador,
+            "mensagem": _sanitizar_erro(msg),
+        }
+        caminho = _arquivo_erros()
+        os.makedirs(os.path.dirname(caminho), mode=0o700, exist_ok=True)
+        fd = os.open(caminho, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entrada, ensure_ascii=False) + "\n")
+        try:
+            if os.path.getsize(caminho) > MAX_BYTES_ERROS:
+                with open(caminho, "r", encoding="utf-8") as f:
+                    linhas = [ln for ln in f.read().split("\n") if ln]
+                tmp = f"{caminho}.{os.getpid()}.tmp"
+                fd2 = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd2, "w", encoding="utf-8") as f:
+                    f.write("\n".join(linhas[-MAX_LINHAS_ERROS:]) + "\n")
+                os.replace(tmp, caminho)
+        except Exception:
+            pass  # poda é só conforto
+        return entrada
+    except Exception:
+        return None
+
+
+async def _async_const(valor):
+    """Embrulha um valor síncrono para passar por `_com_diario`."""
+    return valor
+
+
+async def _com_diario(ferramenta: str, args: dict | None, coro):
+    """Aguarda a ferramenta; anota exceção ou marcador de falha/parcial na saída. Nunca altera o resultado."""
+    t0 = time.time()
+    try:
+        r = await coro
+    except Exception as e:
+        _registrar_erro(ferramenta, erro=e, args=args, ms=int((time.time() - t0) * 1000))
+        raise
+    try:
+        marca = _falha_na_saida(r)
+        if marca:
+            _registrar_erro(ferramenta, texto=r, args=args, ms=int((time.time() - t0) * 1000), parcial=(marca == "parcial"))
+    except Exception:
+        pass
+    return r
+
+
+def _ler_erros(dias: int = 30, agora: float | None = None) -> list[dict]:
+    agora = time.time() if agora is None else agora
+    corte = agora - max(1, int(dias)) * 86400
+    saida: list[dict] = []
+    try:
+        with open(_arquivo_erros(), "r", encoding="utf-8") as f:
+            for ln in f:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    e = json.loads(ln)
+                    if _dt.datetime.fromisoformat(e["quando"]).timestamp() >= corte:
+                        saida.append(e)
+                except Exception:
+                    continue
+    except Exception:
+        return []
+    return saida
+
+
+# causa provável, ação e quem corrige ("autor" = só o desenvolvedor; "usuario" = esperar/ajustar; "portal" = fora do controle)
+_CAUSAS_ERRO = {
+    "timeout": ("O portal ou o host do PDF demorou mais que o tempo limite (resposta de até ~20 MB).",
+                "Repita com filtros mais estreitos (relator, órgão, número) ou mais tarde.", "portal"),
+    "rede_ou_certificado": ("Falha de rede, DNS ou certificado.",
+                            "Confira a conexão/VPN/proxy. Se só esta extensão falha, relate.", "usuario"),
+    "pdf_falha": ("O PDF do inteiro teor não pôde ser baixado ou lido.",
+                  "Abra o link do PDF no navegador; repita mais tarde. Se repetir com vários acórdãos, relate.", "portal"),
+    "pdf_sem_texto": ("PDF digitalizado (sem camada de texto); a extensão não faz OCR.",
+                      "Leia o PDF no navegador. Não é defeito da extensão.", "portal"),
+    "pdf_parcial": ("Extração do PDF parou num teto (páginas/tempo) ou o PDF é misto.",
+                    "O texto lido é citável, mas não prova que algo NÃO consta do acórdão; abra o PDF.", "portal"),
+    "formato_inesperado": ("O portal devolveu uma resposta em formato que a extensão não conhece.",
+                           "Provável mudança no portal: relate com o relatório abaixo.", "autor"),
+    "dependencia_ausente": ("Pacote Python necessário não está instalado.",
+                            "Reinstale as dependências (README, seção do Python).", "usuario"),
+    "outro": ("Erro não classificado.", "É o mais útil para o autor: envie o relatório abaixo.", "autor"),
+}
+
+
+def _causa_de(tipo: str) -> tuple[str, str, str]:
+    if tipo in _CAUSAS_ERRO:
+        return _CAUSAS_ERRO[tipo]
+    if tipo.startswith("http_5"):
+        return ("O portal respondeu erro de servidor.", "Repita depois; se só acontece com certos filtros, pode ser consulta mal formada (relate).", "portal")
+    if tipo in ("http_403", "http_429"):
+        return ("O portal recusou ou limitou a requisição.", "Espere; veja diagnostico_ritmo_tcero. Nunca contorne pelo navegador.", "portal")
+    if tipo.startswith("http_4"):
+        return ("O portal recusou a requisição (4xx).", "Provável consulta mal formada: relate.", "autor")
+    return _CAUSAS_ERRO["outro"]
+
+
+def _fmt_data_erro(iso: str) -> str:
+    try:
+        return _dt.datetime.fromisoformat(iso).astimezone().strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        return str(iso)[:16]
+
+
+def _resumir_erros(entradas: list[dict], dias: int = 30, relatorio: bool = False, limite: int = 15) -> str:
+    """Resumo por tipo e ferramenta, com período, versões, causa provável e o link de issue pré-preenchido
+    (`_link_relato`, só dado técnico) do tipo mais frequente que não se resolve esperando."""
+    if not entradas:
+        return (f"Nenhum erro registrado nos últimos {dias} dia(s). O diário só anota falhas das ferramentas "
+                "(rede, portal, PDF, formato), com dado técnico; nunca o que foi pesquisado nem trecho citado. "
+                f"Arquivo: {_arquivo_erros()}")
+    grupos: dict[tuple[str, str], dict] = {}
+    for e in entradas:
+        k = (e.get("tipo") or "outro", e.get("ferramenta") or "?")
+        g = grupos.setdefault(k, {"tipo": k[0], "ferramenta": k[1], "n": 0, "parciais": 0, "primeiro": e["quando"],
+                                  "ultimo": e["quando"], "versoes": set(), "amostra": e})
+        g["n"] += 1
+        g["parciais"] += 1 if e.get("parcial") else 0
+        g["primeiro"] = min(g["primeiro"], e["quando"])
+        if e["quando"] >= g["ultimo"]:
+            g["ultimo"], g["amostra"] = e["quando"], e
+        g["versoes"].add(e.get("versao") or "?")
+    lista = sorted(grupos.values(), key=lambda g: (-g["n"], g["tipo"], g["ferramenta"]))
+    out = [f"**Diário de erros** — {len(entradas)} registro(s) em {len(lista)} padrão(ões), últimos {dias} dia(s), "
+           f"de {_fmt_data_erro(min(e['quando'] for e in entradas))} a {_fmt_data_erro(max(e['quando'] for e in entradas))}. "
+           f"Arquivo: {_arquivo_erros()}", ""]
+    for g in lista[:max(1, limite)]:
+        causa, acao, quem = _causa_de(g["tipo"])
+        a = g["amostra"]
+        out.append(
+            f"- **{g['tipo']}** em `{g['ferramenta']}` · {g['n']}× ({g['parciais']} parcial) · de {_fmt_data_erro(g['primeiro'])} "
+            f"a {_fmt_data_erro(g['ultimo'])} · v{', v'.join(sorted(g['versoes']))}\n"
+            f"  Causa provável: {causa} Ação: {acao} _(quem corrige: {quem})_\n"
+            f"  Última mensagem: {a.get('mensagem')}" + (f" (HTTP {a['http']})" if a.get("http") else "")
+            + f" · parâmetros: {json.dumps(a.get('args') or {}, ensure_ascii=False)}"
+        )
+    autor = sum(g["n"] for g in lista if _causa_de(g["tipo"])[2] == "autor")
+    out.append("")
+    out.append(
+        f"⚠️ {autor} registro(s) são de causa que o AUTOR pode corrigir: rode `diagnostico_erros_tcero(relatorio=true)` e entregue o relatório."
+        if autor else "Nenhum registro de causa corrigível pelo autor neste período (o resto vem do portal, da rede ou do ritmo)."
+    )
+    alvo = next((g["tipo"] for g in lista if g["tipo"] not in SEM_RELATO_TIPOS), None)
+    if alvo:
+        out.append(f"Relatar o problema (formulário já preenchido só com versão, sistema, tipo e estado do limitador; revise antes de enviar): {_link_relato(alvo)}")
+    if relatorio:
+        ult = entradas[-20:]
+        out.append("")
+        out.append("**Relatório técnico para análise** (sem texto de busca, sem nomes e sem número de processo; pode ser colado em issue pública)")
+        out.append(f"- Versão: {VERSAO} · Sistema: {platform.system()} {platform.release()} · Python {platform.python_version()}")
+        out.append(f"- Registros: {len(entradas)} (últimos {len(ult)} abaixo)")
+        out.append("")
+        out.append("| Quando | Ferramenta | Tipo | ms | Limitador | Mensagem | Parâmetros |")
+        out.append("|---|---|---|---|---|---|---|")
+        for e in ult:
+            out.append("| " + " | ".join([
+                _fmt_data_erro(e.get("quando", "")), str(e.get("ferramenta")),
+                f"{e.get('tipo')}{' (' + e['http'] + ')' if e.get('http') else ''}{' parcial' if e.get('parcial') else ''}",
+                str(e.get("ms") if e.get("ms") is not None else ""), str(e.get("limitador") or ""),
+                str(e.get("mensagem") or "").replace("|", "/"),
+                json.dumps(e.get("args") or {}, ensure_ascii=False).replace("|", "/"),
+            ]) + " |")
+        out.append(f"\nAbrir issue: {ISSUES_NOVA}")
+    return "\n".join(out)
+
+
+def _diagnostico_erros(dias: int = 30, relatorio: bool = False, agora: float | None = None) -> str:
+    try:
+        dias = int(dias)
+    except Exception:
+        return "dias inválido: informe um número inteiro de 1 a 365."
+    if not (1 <= dias <= 365):
+        return "dias inválido: informe um número inteiro de 1 a 365."
+    return _resumir_erros(_ler_erros(dias, agora), dias, bool(relatorio))
+
+
+# ---- buscar_recibos_tcero (item 1): busca SEM REDE nos recibos locais ---------- #
+RECIBOS_LIMITE_MAX = 20
+_MEMO_RECIBOS: dict[str, tuple[float, dict | None]] = {}
+
+
+def _recibo_integro(dados) -> bool:
+    """Mesma conferência de `_ler_recibo_tcero` (sha256 do `texto` e, se existir, `sha256_campos`), mas
+    sobre um dict já lido — recibo adulterado ou incompleto fica de fora da busca."""
+    if not isinstance(dados, dict) or not isinstance(dados.get("texto"), str) or not dados["texto"]:
+        return False
+    if not _RE_ID_DECISAO_SEGURO.match(str(dados.get("id_documento") or "")):
+        return False
+    if dados.get("sha256") != _sha256_texto(dados["texto"]):
+        return False
+    if "sha256_campos" in dados and dados["sha256_campos"] != _sha256_campos_recibo(dados):
+        return False
+    return True
+
+
+def _listar_recibos_tcero(pasta: str | None = None) -> tuple[list[dict], int]:
+    """Todos os recibos íntegros da pasta, com o texto já normalizado como o verificador normaliza
+    (`_normalizar_casamento`), e quantos arquivos foram ignorados (ilegíveis ou com hash que não bate).
+    Memoizado por (arquivo, mtime): 36+ recibos de ~100 KB não se releem a cada busca."""
+    pasta = pasta or DIR_RECIBOS
+    try:
+        nomes = [n for n in os.listdir(pasta) if re.match(r"^\d+\.json$", n)]
+    except Exception:
+        return [], 0
+    out: list[dict] = []
+    ignorados = 0
+    for n in nomes:
+        cam = os.path.join(pasta, n)
+        try:
+            mt = os.stat(cam).st_mtime
+        except Exception:
+            continue
+        memo = _MEMO_RECIBOS.get(cam)
+        if memo is None or memo[0] != mt:
+            dados = _ler_json_generico(cam)
+            item = {"r": dados, "tn": _normalizar_casamento(dados["texto"])} if _recibo_integro(dados) else None
+            memo = (mt, item)
+            _MEMO_RECIBOS[cam] = memo
+        if memo[1] is None:
+            ignorados += 1
+        else:
+            out.append(memo[1])
+    out.sort(key=lambda it: str(it["r"].get("data_sessao") or ""), reverse=True)
+    return out, ignorados
+
+
+def _regex_termo_recibo(termo: str):
+    """Regex de PALAVRA INTEIRA sobre texto de `_normalizar_casamento`: o termo passa pela mesma
+    normalização do verificador; espaço = frase em ordem; `*` no fim = prefixo ("multa*" pega "multas")."""
+    prefixo = str(termo or "").strip().endswith("*")
+    palavras = [w for w in re.split(r"[\s']+", _normalizar_casamento(str(termo or "").replace("*", " "))) if w]
+    if not palavras:
+        return None
+    corpo = r"[\s']+".join(re.escape(w) for w in palavras)
+    return re.compile(r"(?<!\w)'?" + corpo + (r"\w*" if prefixo else "") + r"(?!\w)")
+
+
+def _termos_da_consulta_recibos(consulta: str) -> list[str]:
+    """`"frase exata"` vira um termo; palavras soltas viram um termo cada (todas exigidas), sem palavras
+    vazias (de, do, a...)."""
+    consulta = consulta or ""
+    termos = [_RE_ESPACO.sub(" ", m.group(1)).strip() for m in _RE_FRASE_ASPAS.finditer(consulta)]
+    resto = _RE_FRASE_ASPAS.sub(" ", consulta)
+    for p in _RE_ESPACO.split(resto.strip()):
+        p = _RE_PONTA_NAO_PALAVRA.sub("", p.rstrip("*")) + ("*" if p.endswith("*") else "")
+        f = _fold(p.rstrip("*"))
+        if len(f) < 2 or f in _PALAVRAS_VAZIAS_RELEVANCIA:
+            continue
+        termos.append(p)
+    vistos: set[str] = set()
+    return [t for t in termos if not (_fold(t) in vistos or vistos.add(_fold(t)))]
+
+
+def _verificacao_gravada(r: dict) -> str:
+    """O que o recibo SABE sobre o PDF: `texto_pdf_completo` None = PDF não lido; True = extraído por
+    inteiro; False = lido em parte. Não registra se o PDF era misto (parte digitalizada)."""
+    c = r.get("texto_pdf_completo")
+    if c is None:
+        return "só ementa + dispositivo do cadastro (PDF não lido)"
+    if c is True:
+        return "inteiro teor lido (PDF), extração completa — o recibo não registra PDF misto (parte digitalizada)"
+    return "inteiro teor lido em parte (PDF) — extração parou num teto ou PDF sem texto: não prova que algo NÃO consta"
+
+
+def _buscar_recibos(consulta: str | None, grupos: list[list[str]] | None, relator: str | None,
+                    orgao: str | None, limite: int = 10, pasta: str | None = None) -> str:
+    """Busca local, ZERO requisição. Procura na ementa, no dispositivo e no texto do PDF gravados no
+    recibo (campo `texto`); NUNCA no texto de IA do DEJUR (`texto_ia_dejur`). Palavra inteira, mesma
+    normalização do verificador; todas as palavras de `consulta` e todos os `grupos` (OU dentro do grupo,
+    E entre grupos) são exigidos."""
+    termos = _termos_da_consulta_recibos(consulta or "")
+    gs = [[t for t in g if _regex_termo_recibo(t)] for g in _grupos_validos(grupos)]
+    gs = [g for g in gs if g]
+    rel_f = _fold(_texto(relator))
+    org_txt = _texto(orgao)
+    if not termos and not gs and not rel_f and not org_txt:
+        return ("BUSCA LOCAL NÃO REALIZADA — informe `consulta` (palavras ou \"frase exata\"), `grupos` "
+                "(sinônimos), `relator` ou `orgao`.")
+    try:
+        lim = max(1, min(int(limite or 10), RECIBOS_LIMITE_MAX))
+    except Exception:
+        lim = 10
+    nome_orgao, aviso_orgao = (_resolver_orgao(org_txt) if org_txt else (None, None))
+    todos, ignorados = _listar_recibos_tcero(pasta)
+    total_geral = len(todos)
+    com_pdf = sum(1 for it in todos if it["r"].get("texto_pdf_completo") is not None)
+    cand = todos
+    if rel_f:
+        cand = [it for it in cand if rel_f in _fold(str(it["r"].get("relator") or ""))]
+    if nome_orgao:
+        alvo_o = _fold(nome_orgao)
+        cand = [it for it in cand if _fold(str(it["r"].get("orgao_cadastro") or "")) == alvo_o]
+    res_t = [(t, _regex_termo_recibo(t)) for t in termos]
+    res_t = [(t, re_) for t, re_ in res_t if re_]
+    res_g = [[(t, _regex_termo_recibo(t)) for t in g] for g in gs]
+    achados: list[tuple[float, str, dict, Any]] = []
+    for it in cand:
+        tn = it["tn"]
+        if not all(re_.search(tn) for _, re_ in res_t):
+            continue
+        if not all(any(re_.search(tn) for _, re_ in g) for g in res_g):
+            continue
+        soma = sum(len(re_.findall(tn)) for _, re_ in res_t) + sum(len(re_.findall(tn)) for g in res_g for _, re_ in g)
+        primeiro = (res_t[0][0] if res_t else (res_g[0][0][0] if res_g else ""))
+        achados.append((soma / math.log(len(tn) + 10), str(it["r"].get("data_sessao") or ""), it, primeiro))
+    achados.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    termos_txt = ", ".join([t for t, _ in res_t] + [" | ".join(t for t in g) for g in gs]) or "(só filtros)"
+    filtros = "; ".join(x for x in (f"relator «{_texto(relator)}»" if rel_f else "", f"órgão «{nome_orgao}»" if nome_orgao else "") if x)
+    linhas = [
+        f"**Recibos locais do TCE-RO — {len(achados)} de {total_geral} decisão(ões) já lidas nesta máquina atendem a «{termos_txt}»"
+        f"{' em ' + filtros if filtros else ''} · ZERO requisição ao portal**",
+        "⚠️ Isto NÃO é pesquisa no acervo do TCE-RO: só olha o que `obter_acordao_tcero` já trouxe para esta máquina "
+        f"({total_geral} recibo(s); {com_pdf} com o PDF lido, {total_geral - com_pdf} só com ementa + dispositivo — "
+        "o que só está no relatório ou no voto não aparece nestes). Zero aqui NUNCA é \"não há jurisprudência\" nem "
+        "\"não localizado\": para isso, `buscar_jurisprudencia_tcero`. Não procura no texto de IA do DEJUR.",
+    ]
+    if ignorados:
+        linhas.append(f"⚠️ {ignorados} arquivo(s) da pasta de recibos ficaram de fora (ilegíveis ou com hash que não confere).")
+    if aviso_orgao:
+        linhas.append(f"⚠️ {aviso_orgao}")
+    if not todos:
+        linhas.append(f"_(nenhum recibo em {pasta or DIR_RECIBOS})_")
+    linhas.append("")
+    for i, (_peso, _dt_sessao, it, primeiro) in enumerate(achados[:lim], start=1):
+        r = it["r"]
+        s_cit = {"sigla": r.get("sigla"), "numero": r.get("numero"), "relator": r.get("relator"),
+                 "orgaoJulgador": r.get("orgao_cadastro"), "dataSessao": r.get("data_sessao"), "idDecisao": r.get("id_documento")}
+        fecho = _orgao_do_fecho(r["texto"]) if r.get("texto_pdf_completo") is not None else None
+        org_txt_item = f"{r.get('orgao_cadastro') or '?'} (cadastro)"
+        if fecho and _fold(fecho) != _fold(str(r.get("orgao_cadastro") or "")):
+            org_txt_item += f"; o fecho do PDF diz {fecho} — vale o fecho, confira"
+        linhas.append(
+            f"{i}. {r.get('sigla') or '?'} {r.get('numero') or '?'} · id {r.get('id_documento')} · {org_txt_item} · "
+            f"julgado em {_data_br(r.get('data_sessao') or '') or '?'} · Rel. {r.get('relator') or '?'} · processo {r.get('processo') or '?'}"
+        )
+        linhas.append(f"   Citação: {_citacao(s_cit)}")
+        linhas.append(f"   Link: {r.get('link') or 'não informado'}")
+        linhas.append(f"   Verificação gravada no recibo: {_verificacao_gravada(r)}")
+        fx = _faixa_norm(_norm1(r["texto"]), [primeiro], 0.0) if primeiro else None
+        if fx:
+            meio = (fx[0] + fx[1]) // 2
+            pos = _posicao_tcero(r["texto"], meio)
+            pag = _pagina_pdf_tcero(r["texto"], meio)
+            if pos:
+                linhas.append(f"   Onde: {pos}" + (f" ({pag})" if pag else ""))
+            a, b = max(0, fx[0] - 140), min(len(r["texto"]), fx[1] + 140)
+            linhas.append(f"   «…{_uma_linha(r['texto'][a:b])}…»")
+        linhas.append(f"   recibo gravado em {str(r.get('gravado_em') or '?')[:16].replace('T', ' ')} (fonte: {r.get('fonte') or '?'})")
+    if len(achados) > lim:
+        linhas.append(f"\n_(mais {len(achados) - lim} recibo(s) atendem; aumente `limite` até {RECIBOS_LIMITE_MAX} ou refine os termos)_")
+    if achados:
+        linhas.append(
+            "\nA citação sai SEM a data do DOe (o recibo não a guarda): para a citação completa, `obter_acordao_tcero(id_decisao=...)`. "
+            "Para conferir uma frase antes das aspas: `verificar_citacao_tcero(id_decisao, trecho)` — sem rede quando há recibo."
+        )
+    else:
+        linhas.append("Nenhum recibo atende. Isso diz só o que esta máquina já leu; não diz nada sobre o acervo do TCE-RO.")
+    return "\n".join(_cortar_bloco(linhas, ORCAMENTO_SAIDA, "resposta de buscar_recibos"))
+
+
+# ---- consulta compartilhada por linha_do_tempo_tcero e sugerir_termos_tcero ---- #
+async def _consulta_filtrada(texto_livre: str | None, grupos: list[list[str]] | None, relator: str | None,
+                             orgao_julgador: str | None, operacao: str) -> dict:
+    """UMA consulta à API, com os mesmos parâmetros que `_buscar` monta (então a resposta cacheada de uma
+    busca anterior idêntica é reaproveitada, sem requisição extra), e o mesmo filtro de `grupos` no cliente.
+    Levanta ValueError/RuntimeError/PortalRecusou como `_buscar`; quem chama formata."""
+    avisos: list[str] = []
+    grupos_ok = _grupos_validos(grupos)
+    params: dict[str, str] = {}
+    tlc = _montar_texto_livre_com_grupos(texto_livre or "", grupos_ok)
+    if tlc:
+        params["textoLivre"] = tlc
+    if not params and not _texto(relator) and not _texto(orgao_julgador):
+        raise ValueError("Informe pelo menos um critério: texto_livre, grupos, relator ou orgao_julgador. "
+                         "Uma consulta sem nenhum filtro devolveria o acervo inteiro.")
+    if _texto(relator):
+        nome, aviso = await _resolver_relator(_texto(relator), operacao)
+        params["relatores"] = nome
+        if aviso:
+            avisos.append(aviso)
+    if _texto(orgao_julgador):
+        nome_o, aviso_o = _resolver_orgao(_texto(orgao_julgador))
+        params["orgaosJulgadores"] = nome_o
+        if aviso_o:
+            avisos.append(aviso_o)
+    dados = await _consultar_api(params, operacao)
+    brutos = dados.get("result") or []
+    if grupos_ok:
+        todos, avisos_ia = _filtrar_por_grupos(brutos, grupos_ok)
+    else:
+        todos, avisos_ia = brutos, {}
+    return {"todos": todos, "brutos": brutos, "total_bruto": len(brutos), "avisos": avisos, "avisos_ia": avisos_ia,
+            "grupos_ok": grupos_ok, "params": params}
+
+
+# ---- linha_do_tempo_tcero (item 3) -------------------------------------------- #
+LINHA_TEMPO_TOPO_POR_ANO = 2
+LINHA_TEMPO_ORGAOS_COLUNAS = 4
+
+
+def _ano_da_sessao(s: dict) -> str:
+    d = _campo_panorama(s.get("dataSessao"))
+    return d[:4] if len(d) >= 4 and d[:4].isdigit() else "sem data de sessão"
+
+
+def _linha_do_tempo(itens: list[dict], termos: list[str], ano_inicio: int | None = None,
+                    ano_fim: int | None = None, filtros: str = "", total_bruto: int | None = None) -> list[str]:
+    """Função PURA: conta por ano (da sessão) e por órgão julgador as decisões `itens` e mostra por ano as
+    duas de maior relevância (mesmo ranking de `_pontuar_relevancia`, desempate por data). Não consulta nada.
+    O ano é o da SESSÃO; o carimbo `data` (registro no portal) não é data de julgamento."""
+    from collections import Counter
+
+    por_ano: dict[str, list[dict]] = {}
+    for item in itens:
+        s = (item.get("source") if isinstance(item, dict) else None) or {}
+        a = _ano_da_sessao(s)
+        if a.isdigit():
+            if ano_inicio is not None and int(a) < ano_inicio:
+                continue
+            if ano_fim is not None and int(a) > ano_fim:
+                continue
+        elif ano_inicio is not None or ano_fim is not None:
+            continue  # com recorte de anos, decisão sem data de sessão não tem como entrar
+        por_ano.setdefault(a, []).append(item)
+    n_total = sum(len(v) for v in por_ano.values())
+    orgaos_total: Counter = Counter()
+    for v in por_ano.values():
+        for item in v:
+            orgaos_total[_campo_panorama((item.get("source") or {}).get("orgaoJulgador")) or "sem informação"] += 1
+    colunas = [o for o, _ in orgaos_total.most_common(LINHA_TEMPO_ORGAOS_COLUNAS)]
+    tem_outros = len(orgaos_total) > len(colunas)
+    anos = sorted((a for a in por_ano if a.isdigit()), reverse=True)
+    sem_data = por_ano.get("sem data de sessão")
+    recorte = ""
+    if ano_inicio is not None or ano_fim is not None:
+        recorte = f" · anos {ano_inicio if ano_inicio is not None else '…'} a {ano_fim if ano_fim is not None else '…'}"
+    cab = (f"**Linha do tempo por ano — {n_total} decisão(ões) que a consulta devolveu{recorte}"
+           + (f" (de {total_bruto} no portal antes do filtro de grupos)" if total_bruto is not None and total_bruto != n_total else "")
+           + (f" · {filtros}" if filtros else "") + "**")
+    linhas = [cab, "",
+              "| Ano | Decisões | " + " | ".join(colunas) + (" | outros" if tem_outros else "") + " |",
+              "|---|---|" + "---|" * (len(colunas) + (1 if tem_outros else 0))]
+
+    def _linha_tabela(rotulo: str, v: list[dict]) -> str:
+        c: Counter = Counter(_campo_panorama((it.get("source") or {}).get("orgaoJulgador")) or "sem informação" for it in v)
+        cols = [str(c.get(o, 0)) for o in colunas]
+        if tem_outros:
+            cols.append(str(sum(c.values()) - sum(c.get(o, 0) for o in colunas)))
+        return f"| {rotulo} | {len(v)} | " + " | ".join(cols) + " |"
+
+    for a in anos:
+        linhas.append(_linha_tabela(a, por_ano[a]))
+    if sem_data:
+        linhas.append(_linha_tabela("sem data de sessão", sem_data))
+    linhas.append("")
+    linhas.append(f"**As {LINHA_TEMPO_TOPO_POR_ANO} decisões mais pertinentes de cada ano** (ordem do ranking de relevância offline: "
+                  "termos distintos da consulta na ementa e no dispositivo; empate por data):")
+    for a in anos:
+        top = _ordenar_por_relevancia(por_ano[a], termos)[:LINHA_TEMPO_TOPO_POR_ANO] if termos else sorted(
+            por_ano[a], key=lambda it: (it.get("source") or {}).get("dataSessao") or "", reverse=True)[:LINHA_TEMPO_TOPO_POR_ANO]
+        for item in top:
+            s = item.get("source") or {}
+            casados = ""
+            if termos:
+                _p, nn = _pontuar_relevancia(s, termos)
+                casados = f" · termos casados {nn}/{len(termos)}"
+            link = _corrigir_link_pdf(s.get("linkArquivo") or "")
+            linhas.append(f"- {a} · id {s.get('idDecisao')} · {_citacao(s)}{casados} · {link or 'link não informado'}")
+    linhas.append("")
+    linhas.append(
+        "_Isto é a CONTAGEM do que o portal devolveu para ESTA consulta (OU nativo no portal; `grupos` filtrados no cliente), "
+        "não a frequência com que a Corte decide o tema nem tendência: o volume de processos, a composição dos órgãos e o que "
+        "o portal publica mudam de ano para ano. Mudança de proporção entre anos é sinal para LER as decisões dos dois "
+        "períodos, nunca prova de mudança de entendimento. Ano = ano da sessão._"
+    )
+    return linhas
+
+
+async def _linha_do_tempo_async(texto_livre, grupos, relator, orgao_julgador, ano_inicio, ano_fim) -> str:
+    try:
+        ai = int(ano_inicio) if ano_inicio not in (None, "") else None
+        af = int(ano_fim) if ano_fim not in (None, "") else None
+    except Exception:
+        return "ano_inicio/ano_fim inválidos: informe números inteiros (ex.: 2020). Nenhuma requisição foi feita."
+    if (ai is not None and not 1990 <= ai <= 2100) or (af is not None and not 1990 <= af <= 2100) or (ai is not None and af is not None and ai > af):
+        return "ano_inicio/ano_fim fora do intervalo plausível (1990 a 2100) ou invertidos. Nenhuma requisição foi feita."
+    try:
+        r = await _consulta_filtrada(texto_livre, grupos, relator, orgao_julgador, "linha_do_tempo")
+    except (ValueError, RuntimeError, PortalRecusou) as e:
+        return _formatar_erro_portal(e, "Erro na consulta ao TCE-RO")
+    except Exception as e:
+        return _formatar_erro_portal(e, f"Erro ao consultar o portal do TCE-RO ({type(e).__name__})")
+    termos = _termos_da_consulta(texto_livre, r["grupos_ok"])
+    filtros = _truncar("; ".join(f"{k}={v}" for k, v in r["params"].items()), 300)
+    linhas = []
+    if r["todos"]:
+        linhas = _linha_do_tempo(r["todos"], termos, ai, af, filtros, r["total_bruto"] if r["grupos_ok"] else None)
+    else:
+        linhas = [f"**Linha do tempo por ano — 0 decisão(ões)** para `{filtros}`."]
+    for a in r["avisos"]:
+        linhas.insert(1, f"⚠️ {a}")
+    return "\n".join(_cortar_bloco(linhas, ORCAMENTO_SAIDA, "resposta da linha do tempo"))
+
+
+# ---- sugerir_termos_tcero (item 4) ---------------------------------------------- #
+# Realimentação por relevância feita NO CLIENTE, sobre a resposta que a busca já traz (zero requisição
+# extra se houver cache): das ementas + dispositivos das decisões que casaram os termos, tira as palavras e
+# os pares de palavras mais DISTINTIVOS — frequentes entre as casadas e raros fora delas. "Fora delas" vem de
+# duas bases: (1) o RESTANTE da própria resposta do portal (decisões que não casaram os termos no núcleo), e
+# (2) um fundo estático do vocabulário das ementas do TCE-RO (`fundo_vocabulario.json`, gerado por
+# `harness/gerar_fundo.py` sobre o snapshot de 5.052 decisões; ausente = só (1)). Sugestão para montar
+# `grupos`: indício, nunca conclusão sobre a tese. Medição: harness/medicao-sugerir-termos-2026-10-15.md.
+SUGESTOES_MIN, SUGESTOES_MAX = 10, 20
+VOCAB_CASADAS_MIN = 8            # abaixo disso, poucas decisões para sugerir
+VOCAB_RESTANTE_MIN = 15          # abaixo disso, o "restante" da resposta não serve de contraste
+VOCAB_LIFT_MIN = 1.3             # frequência nas casadas ÷ frequência no restante
+VOCAB_LIFT_FUNDO_MIN = 5.0       # frequência nas casadas ÷ frequência no fundo (palavra/par que só é "da área" não serve)
+_ARQ_FUNDO_PADRAO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fundo_vocabulario.json")
+_fundo_cache: dict[str, Any] = {}
+
+_STOP_VOCAB = frozenset(
+    "para como pela pelo pelas pelos entre sobre sendo foram ainda sendo cada todo toda todos todas desde "
+    "ante apos assim mais menos muito muita muitos muitas quando onde qual quais cujo cuja cujos cujas "
+    "esta este estes estas essa esse esses essas aquele aquela isso isto aqui seus suas seu sua nosso "
+    "nossa tambem porem contudo todavia portanto entao pois porque conforme segundo mediante perante "
+    "contra durante dentro fora havia houve haver ter tem tinha possui possuem deve devem deverao pode "
+    "podem podera nao sem sob ser sao seja sejam fosse eram era foi sera serao tendo tendo ficou fica "
+    "visto vista dado dada dados partir devido onde alem inclusive bem forma modo tal tais outro outra "
+    "outros outras mesmo mesma mesmos mesmas neste nesta nestes nestas nesse nessa nesses nessas "
+    "deste desta destes destas desse dessa desses dessas pelos aquilo hoje atual atuais".split()
+)
+_RE_PALAVRA_VOCAB = re.compile(r"[a-z]{4,}")
+
+
+def _tokens_vocab(texto: str) -> list[str]:
+    """Palavras de 4+ letras (sem acento, minúsculas), sem número e sem palavra de ligação, na ordem do texto."""
+    return [w for w in _RE_PALAVRA_VOCAB.findall(_fold(texto or "")) if w not in _STOP_VOCAB]
+
+
+def _texto_vocab_da_decisao(s: dict) -> str:
+    """Só o núcleo (ementa + dispositivo); a IA do DEJUR nunca entra no vocabulário."""
+    return (s.get("ementa") or "") + " " + _html_para_texto(s.get("acordaoDescricao") or "")
+
+
+def _carregar_fundo() -> dict | None:
+    caminho = os.environ.get("TCERO_MCP_FUNDO_VOCAB") or _ARQ_FUNDO_PADRAO
+    if caminho in _fundo_cache:
+        return _fundo_cache[caminho]
+    fundo = None
+    try:
+        d = _ler_json_generico(caminho)
+        if isinstance(d, dict) and isinstance(d.get("df"), dict) and int(d.get("N") or 0) >= 300:
+            fundo = {"N": int(d["N"]), "df": d["df"], "df2": d.get("df2") if isinstance(d.get("df2"), dict) else {}}
+    except Exception:
+        fundo = None
+    _fundo_cache[caminho] = fundo
+    return fundo
+
+
+def _unidades_da_consulta(texto_livre: str | None, grupos_ok: list[list[str]]) -> list[list[str]]:
+    """Com `grupos`: cada grupo é uma unidade (basta UM termo dele); sem: cada termo solto de texto_livre."""
+    if grupos_ok:
+        return grupos_ok
+    return [[t] for t in _termos_da_consulta(texto_livre, None)]
+
+
+def _acertos_da_decisao(s: dict, unidades: list[list[str]]) -> int:
+    nucleo, _ia = _campos_casamento(s)
+    return sum(1 for u in unidades if any(_termo_casa(nucleo, t) for t in u))
+
+
+def _separar_casadas(itens: list[dict], unidades: list[list[str]], minimo: int = 10) -> tuple[list[dict], list[dict], int]:
+    """(casadas, restante, k): k = maior número de unidades que ao menos `minimo` decisões casam NO NÚCLEO
+    (ementa + dispositivo), descendo de M até 1. Casadas = quem casa k ou mais; restante = o resto da
+    resposta. Se nem com k=1 há `minimo` decisões, casadas = as que casam 1 ou mais (pode ser menos)."""
+    pontos = [(_acertos_da_decisao(it.get("source") or {}, unidades), it) for it in itens]
+    m = len(unidades)
+    k = 1
+    for cand in range(m, 0, -1):
+        if sum(1 for p, _ in pontos if p >= cand) >= minimo:
+            k = cand
+            break
+    return [it for p, it in pontos if p >= k and p >= 1], [it for p, it in pontos if p < k or p < 1], k
+
+
+def _sugerir_vocabulario(casadas: list[dict], restante: list[dict], termos_usuario: list[str],
+                         fundo: dict | None, relatores_nomes: set[str] | None = None) -> dict:
+    """Função PURA. Devolve {n, m, termos: [(palavra, c)], pares: [(par, c)], usou_fundo, usou_restante} ou {pouco: True, n}."""
+    n = len(casadas)
+    if n < VOCAB_CASADAS_MIN:
+        return {"pouco": True, "n": n}
+    m = len(restante)
+    usa_restante = m >= VOCAB_RESTANTE_MIN
+    usa_fundo = fundo is not None
+    if not usa_restante and not usa_fundo:
+        return {"sem_base": True, "n": n, "m": m}
+    nomes = set(relatores_nomes or ())
+    meus: set[str] = set()
+    for t in termos_usuario:
+        for w in _RE_PALAVRA_VOCAB.findall(_fold(t)):
+            meus.add(w)
+    stems = [w[:max(5, len(w) - 3)] if len(w) >= 6 else w for w in meus]
+    ja = lambda w: w in meus or w in nomes or any(w.startswith(st) for st in stems)
+
+    def dfs(itens: list[dict]) -> tuple[dict[str, int], dict[str, int]]:
+        d1: dict[str, int] = {}
+        d2: dict[str, int] = {}
+        for it in itens:
+            ws = _tokens_vocab(_texto_vocab_da_decisao(it.get("source") or {}))
+            for w in set(ws):
+                d1[w] = d1.get(w, 0) + 1
+            for p in {f"{a} {b}" for a, b in zip(ws, ws[1:]) if a != b}:
+                d2[p] = d2.get(p, 0) + 1
+        return d1, d2
+
+    c1, c2 = dfs(casadas)
+    r1, r2 = dfs(restante) if usa_restante else ({}, {})
+    N = fundo["N"] if usa_fundo else 0
+    fdf = fundo["df"] if usa_fundo else {}
+    fdf2 = fundo.get("df2") or {} if usa_fundo else {}
+
+    # consulta ampla (as casadas são uma fração grande do fundo): 5x o fundo é matematicamente inatingível
+    # (n/N = 37% só permite 2,7x), então o piso desce, nunca abaixo de 1,5x
+    lift_min = min(VOCAB_LIFT_FUNDO_MIN, max(1.5, 0.6 / max(n / (N + 1), 1e-9))) if usa_fundo else VOCAB_LIFT_FUNDO_MIN
+
+    def lift_fundo(c: int, df_f: int) -> float:
+        """quantas vezes a palavra/par é mais frequente nas casadas que no fundo (df_f já em contagem de documentos)."""
+        return (c / n) / ((df_f + 1) / (N + 1))
+
+    def lift_ok(c: int, r: int) -> bool:
+        return (not usa_restante) or (c / n) >= VOCAB_LIFT_MIN * (r / m)
+
+    def escolher(piso_share: float) -> tuple[list[tuple[str, int, float]], list[tuple[str, int, float]]]:
+        piso = max(3, math.ceil(piso_share * n))
+        uni = []
+        for w, c in c1.items():
+            if len(w) < 5 or c < piso or ja(w) or not lift_ok(c, r1.get(w, 0)):
+                continue
+            if usa_fundo:
+                lf = lift_fundo(c, int(fdf.get(w, 0)))
+                if lf < lift_min:
+                    continue
+                uni.append((w, c, round((c / n) * math.log(lf), 6)))
+            else:
+                uni.append((w, c, round((c / n) * math.log((m + 1) / (r1.get(w, 0) + 1)), 6)))
+        par = []
+        for p, c in c2.items():
+            a, b = p.split(" ")
+            if c < max(3, math.ceil((piso_share + 0.05) * n)) or ja(a) or ja(b):
+                continue
+            if not lift_ok(c, r2.get(p, 0)):
+                continue
+            if usa_fundo:
+                # par ausente do fundo (df < 5) conta como df 4: o piso do arquivo
+                lf = lift_fundo(c, int(fdf2.get(p, 4)))
+                if lf < lift_min:
+                    continue
+                par.append((p, c, round((c / n) * math.log(lf), 6)))
+            else:
+                par.append((p, c, round((c / n) * math.log((m + 1) / (r2.get(p, 0) + 1)), 6)))
+        uni.sort(key=lambda x: (-x[2], x[0]))
+        par.sort(key=lambda x: (-x[2], x[0]))
+        return uni, par
+
+    for share in (0.20, 0.15, 0.10, 0.07):
+        uni, par = escolher(share)
+        if len(uni[:12]) + len(par[:8]) >= SUGESTOES_MIN:
+            break
+    # pares só entram se não repetirem uma palavra já sugerida (evita "dano" + "dano erario" + "erario")
+    termos = uni[:12]
+    palavras_ja = {w for w, _, _ in termos}
+    pares = [(p, c, sc) for p, c, sc in par if not (set(p.split(" ")) <= palavras_ja)][:8]
+    return {"n": n, "m": m, "termos": [(w, c) for w, c, _ in termos], "pares": [(p, c) for p, c, _ in pares],
+            "usou_fundo": usa_fundo, "usou_restante": usa_restante, "piso": share, "lift_min": round(lift_min, 2)}
+
+
+def _bloco_vocabulario(res: dict, k: int, m_unid: int, total_bruto: int, filtros: str) -> list[str]:
+    if res.get("pouco"):
+        return [f"**Vocabulário:** só {res['n']} decisão(ões) casaram os termos no núcleo (ementa + dispositivo); são poucas "
+                f"para sugerir termos (mínimo {VOCAB_CASADAS_MIN}). Alargue a consulta (menos grupos ou mais sinônimos) e repita."]
+    if res.get("sem_base"):
+        return [f"**Vocabulário:** a resposta tem só {res['m']} decisão(ões) fora das que casaram (mínimo {VOCAB_RESTANTE_MIN} para "
+                "servir de contraste) e o fundo `fundo_vocabulario.json` não está disponível; sem base de comparação, "
+                "sugerir seria devolver as palavras mais comuns. Nada sugerido."]
+    base = []
+    if res["usou_restante"]:
+        base.append(f"as outras {res['m']} decisões da resposta")
+    if res["usou_fundo"]:
+        base.append("o vocabulário geral das ementas do TCE-RO (fundo local)")
+    linhas = [
+        f"**Vocabulário das {res['n']} decisões que casaram {k} de {m_unid} termo(s)/grupo(s) no núcleo (ementa + dispositivo)** "
+        f"(de {total_bruto} que o portal devolveu; contraste com {' e '.join(base)}; zero requisição extra). "
+        "Sugestão para a próxima rodada, indício e não conclusão."
+    ]
+    if res["termos"]:
+        linhas.append("- Palavras características (nº de decisões casadas que a trazem): "
+                      + ", ".join(f"{w} ({c}/{res['n']})" for w, c in res["termos"]))
+    if res["pares"]:
+        linhas.append("- Pares de palavras: " + ", ".join(f"«{p}» ({c}/{res['n']})" for p, c in res["pares"]))
+    total = len(res["termos"]) + len(res["pares"])
+    if total == 0:
+        linhas.append("- Nada passou o corte de frequência.")
+    elif total < SUGESTOES_MIN:
+        linhas.append(f"- (só {total} passaram o corte; a página tem pouca variedade de vocabulário)")
+    linhas.append(
+        "Como usar: escolha 2 a 4 que sejam sinônimos ou variantes do SEU conceito e acrescente-os ao mesmo grupo de `grupos` "
+        "(alternativas em OU, alarga); como grupo novo eles exigem o conceito (E, estreita). NÃO cole a lista inteira: na medição "
+        "(6 consultas), 3 sugestões em OU ampliaram o conjunto mas derrubaram o topo em 4 consultas. Palavras de 5+ letras casam "
+        "também a flexão (\"multa\" pega \"multas\"). Cada rodada gasta uma consulta ao portal."
+    )
+    return linhas
+
+
+async def _sugerir_termos_async(texto_livre: str | None, grupos: list[list[str]] | None) -> str:
+    try:
+        r = await _consulta_filtrada(texto_livre, grupos, None, None, "sugerir_termos")
+    except (ValueError, RuntimeError, PortalRecusou) as e:
+        return _formatar_erro_portal(e, "Erro na consulta ao TCE-RO")
+    except Exception as e:
+        return _formatar_erro_portal(e, f"Erro ao consultar o portal do TCE-RO ({type(e).__name__})")
+    grupos_ok = r["grupos_ok"]
+    if not grupos_ok and not _termos_da_consulta(texto_livre, None):
+        return "Informe `texto_livre` ou `grupos` com ao menos um termo."
+    # para o contraste, a base é a resposta INTEIRA do portal (antes do filtro de grupos), não só o que sobrou
+    # do filtro: quem ficou de fora do E é justamente o "restante".
+    todos_portal = r["brutos"]
+    unidades = _unidades_da_consulta(texto_livre, grupos_ok)
+    casadas, restante, k = _separar_casadas(todos_portal, unidades)
+    termos_usuario = [t for u in unidades for t in u]
+    nomes = set()
+    for it in todos_portal:
+        nomes.update(_RE_PALAVRA_VOCAB.findall(_fold((it.get("source") or {}).get("relator") or "")))
+    res = _sugerir_vocabulario([it for it in casadas], restante, termos_usuario, _carregar_fundo(), nomes)
+    linhas = [f"Consulta: `{_truncar('; '.join(f'{kk}={v}' for kk, v in r['params'].items()), 200)}`"]
+    linhas.extend(_bloco_vocabulario(res, k, len(unidades), len(todos_portal), ""))
+    return "\n".join(_cortar_bloco(linhas, ORCAMENTO_SAIDA, "resposta de sugerir_termos"))
+
+
+# ---- modo triagem de obter_acordao_tcero (item 5) ------------------------------- #
+# Leitura BARATA para decidir se vale ler o acórdão inteiro: citação, resultado, ementa inteira, dispositivo,
+# órgão do cadastro, link e — se `ler_inteiro_teor` — do PDF só a estrutura (onde começam acórdão, relatório,
+# voto, votos de outros conselheiros), o fecho e as linhas que os detectores deste servidor já marcam
+# (voto divergente, obiter, transcrição, parecer do MPC, alegação da parte), cada uma com o lugar onde aparece.
+# Sem o texto corrido. NUNCA serve para aspas.
+TRIAGEM_FECHO_MAX = 1800
+TRIAGEM_EXCERTO_MAX = 200
+TRIAGEM_ALERTAS_POR_TIPO = 3
+_RE_FECHO_ACORDAM = re.compile(r"(?i)ACORDAM\s+os\s+Senhores\s+Conselheiros")
+_RE_PROC_LINHA_TC = re.compile(r"(?m)^[ \t]*Proc\.?[ \t]*:[^\n]*\n?")   # "Proc.: 02603/22" que sobra do cabeçalho de página
+_ROTULO_ESTRUTURA = {
+    "ementa": "EMENTA", "acordao": "ACÓRDÃO (o que o colegiado proclamou)", "relatorio": "RELATÓRIO",
+    "voto": "VOTO do relator", "proposta de decisao": "PROPOSTA DE DECISÃO", "fundamentacao": "FUNDAMENTAÇÃO",
+    "fundamentos": "FUNDAMENTOS", "dispositivo": "DISPOSITIVO",
+}
+
+
+def _texto_do_recibo(s: dict, texto_pdf: str | None) -> str:
+    """O mesmo texto que `_gravar_recibo_tcero` guarda em `texto` (ementa + dispositivo + PDF)."""
+    ementa = _ementa_limpa(s).strip()
+    dispositivo = _html_para_texto(s.get("acordaoDescricao") or "").strip()
+    return "\n\n".join(p for p in (ementa, dispositivo, texto_pdf or "") if p)
+
+
+def _estrutura_pdf_tcero(bruto: str) -> list[tuple[str, str, str]]:
+    """[(rótulo, página, título)] dos cabeçalhos que `_posicao_tcero` usa (mesma regex e mesmos filtros), na
+    ordem do texto; voto de outro conselheiro (título com outro nome que o relator da autuação) é rotulado à
+    parte pela própria `_posicao_tcero`."""
+    out = []
+    for m in _RE_CAB_TC.finditer(bruto):
+        k = _norm1(m.group(1))
+        resto = _norm1(m.group(2) or "").strip(" :.-–")
+        if k == "dispositivo" and resto.startswith("e tese"):
+            continue
+        if k in ("acordao", "relatorio", "dispositivo", "ementa") and len(resto) > 25:
+            continue
+        rotulo = _ROTULO_ESTRUTURA.get(k, k.upper())
+        if k in ("voto", "proposta de decisao", "fundamentacao", "fundamentos"):
+            pos = _posicao_tcero(bruto, min(len(bruto) - 1, m.end() + 3))
+            if pos.startswith("VOTO de outro conselheiro"):
+                rotulo = "VOTO de outro conselheiro"
+        titulo = _RE_ESPACOS_PY.sub(" ", bruto[m.start():m.end()]).strip()[:80]
+        out.append((rotulo, _pagina_pdf_tcero(bruto, m.start()), titulo))
+    return out
+
+
+def _fecho_do_pdf(bruto: str, maximo: int = TRIAGEM_FECHO_MAX) -> tuple[str | None, int]:
+    """(texto do fecho, quantos "ACORDAM os Senhores Conselheiros" há no texto). O fecho vai de ACORDAM até o
+    próximo título (relatório/voto) ou 3.000 caracteres; cabeçalho de página fora; cortado em `maximo`."""
+    ms = list(_RE_FECHO_ACORDAM.finditer(bruto))
+    if not ms:
+        return None, 0
+    ini = ms[0].start()
+    fim = min(len(bruto), ini + 3000)
+    for m in _RE_CAB_TC.finditer(bruto, ini + 20, fim):
+        if _norm1(m.group(1)) in ("relatorio", "voto", "proposta de decisao"):
+            fim = m.start()
+            break
+    seg = _RE_ESPACOS_PY.sub(" ", _RE_PROC_LINHA_TC.sub(" ", _RE_PAGINA_TC.sub(" ", bruto[ini:fim]))).strip()
+    if len(seg) > maximo:
+        seg = seg[:maximo].rsplit(" ", 1)[0] + " […]"
+    return seg, len(ms)
+
+
+def _alertas_de_triagem(bruto: str) -> list[tuple[str, int, list[tuple[int, str]]]]:
+    """[(rótulo, total de gatilhos, [(posição no bruto, excerto)] dos primeiros)] — os MESMOS detectores que
+    alimentam os campos do recibo (`_excertos_raw`) mais a marca de obiter. Gatilhos amplos (STF/STJ/Súmula,
+    "parecer", "alega") disparam muito em acórdão de contas: mostram-se só os primeiros."""
+    out = []
+    for rotulo, regex in (("voto divergente / vencido / vista", _RE_DIVERGENCIA_RAW),
+                          ("parecer do MPC / corpo técnico", _RE_PARECER_MPC_RAW),
+                          ("alegação da parte", _RE_ALEGACAO_RAW),
+                          ("transcrição de outro julgado/norma", _RE_TRANSCRICAO_RAW)):
+        exc = _excertos_raw_com_pos(bruto, regex)
+        if exc:
+            out.append((rotulo, len(exc), exc[:TRIAGEM_ALERTAS_POR_TIPO]))
+    tn = _norm1(bruto)
+    ob = []
+    for m in _RE_OBITER.finditer(tn):
+        if any(abs(m.start() - p) < 40 for p, _ in ob):
+            continue
+        ini = _inicio_da_frase(bruto, tn, max(0, m.start() - _OBITER_JANELA), m.start())
+        ob.append((m.start(), _RE_ESPACOS_PY.sub(" ", bruto[max(ini, m.start() - 40):m.start() + 160]).strip()))
+    if ob:
+        out.append(("obiter dictum? (marca de raciocínio hipotético)", len(ob), ob[:TRIAGEM_ALERTAS_POR_TIPO]))
+    return out
+
+
+def _linhas_triagem_pdf(bruto: str, resultado: dict) -> list[str]:
+    """Bloco "Do PDF" da triagem — sem o texto corrido."""
+    if resultado.get("sem_texto"):
+        return ["\n**Do PDF:** sem texto extraível (provável digitalização); a triagem não tem o que mostrar. Abra o link no navegador."]
+    paginas = resultado.get("paginas", 0)
+    estado = ("extração PARCIAL (" + str(resultado.get("motivo_parcial")) + ")") if resultado.get("parcial") else "extração completa"
+    linhas = [f"\n**Do PDF (sem o texto corrido) — {_num(paginas)} página(s), {estado}:**"]
+    est = _estrutura_pdf_tcero(bruto)
+    if est:
+        linhas.append("- Estrutura: " + " · ".join(f"{r}{' (' + p.replace(' do PDF', '') + ')' if p else ''}" for r, p, _t in est))
+        outros = [(r, p, t) for r, p, t in est if r == "VOTO de outro conselheiro"]
+        for r, p, t in outros:
+            linhas.append(f"- VOTO de outro conselheiro começa em «{t}»" + (f" ({p})" if p else "")
+                          + " — não é o voto condutor (vencido, vista ou vogal); veja quem venceu no fecho.")
+    else:
+        linhas.append("- Estrutura: nenhum título de acórdão/relatório/voto reconhecido neste PDF.")
+    fecho, n_fechos = _fecho_do_pdf(bruto)
+    if fecho:
+        linhas.append(f"- Fecho (literal, cabeçalhos de página fora): «{fecho}»" + (f" (há {n_fechos} fechos no PDF; este é o primeiro)" if n_fechos > 1 else ""))
+        org = _orgao_do_fecho(bruto)
+        if org:
+            linhas.append(f"- Órgão que o fecho declara: {org}")
+    else:
+        linhas.append("- Fecho: não há \"ACORDAM os Senhores Conselheiros\" no texto (decisão monocrática ou texto sem fecho).")
+    alertas = _alertas_de_triagem(bruto)
+    if alertas:
+        linhas.append("- Linhas que os detectores marcam (indício para ler; não é veredito):")
+        for rotulo, total, ocorr in alertas:
+            linhas.append(f"  · {rotulo}: {total} ocorrência(s)" + (f" (mostro {len(ocorr)})" if total > len(ocorr) else ""))
+            for pos, exc in ocorr:
+                onde = _posicao_tcero(bruto, pos + 1)
+                pag = _pagina_pdf_tcero(bruto, pos)
+                linhas.append(f"    – {onde or 'posição não identificada'}{' (' + pag + ')' if pag else ''}: «{exc[:TRIAGEM_EXCERTO_MAX]}{'…' if len(exc) > TRIAGEM_EXCERTO_MAX else ''}»")
+    else:
+        linhas.append("- Linhas marcadas pelos detectores: nenhuma.")
+    return linhas
+
+
+def _triagem_decisao(s: dict, bruto_pdf: str | None = None, resultado_pdf: dict | None = None,
+                     aviso_pdf: str | None = None) -> list[str]:
+    """Bloco de triagem de UMA decisão. `bruto_pdf` = texto do recibo (ementa + dispositivo + PDF) se o PDF foi lido."""
+    linhas = [f"\n### TRIAGEM · {s.get('sigla') or '?'} {s.get('numero') or '(sem número)'} · id {s.get('idDecisao')}",
+              f"Citação: {_citacao(s)}"]
+    campos = []
+    for chave, rotulo in (("processo", "Processo"), ("natureza", "Natureza"), ("assunto", "Assunto"),
+                          ("jurisdicionado", "Jurisdicionado"), ("votacao", "Votação"), ("resultado", "Resultado")):
+        if s.get(chave):
+            campos.append(f"{rotulo}: {_uma_linha(str(s[chave]))[:240]}")
+    if campos:
+        linhas.append("  " + " · ".join(campos))
+    linhas.append(f"  Órgão julgador (cadastro): {s.get('orgaoJulgador') or 'não informado'}")
+    for a in _avisos_cancelamento_vinculo(s):
+        linhas.append(a)
+    ementa = _neutralizar_markdown((s.get("ementa") or "—").strip())
+    if len(ementa) > ORCAMENTO_CAMPO:
+        ementa = ementa[:ORCAMENTO_CAMPO].rsplit(" ", 1)[0] + "… [CORTADO pelo orçamento de caracteres]"
+    linhas.append(f"\n**Ementa (integral, literal do portal):**\n{ementa}")
+    disp = _neutralizar_markdown(_html_para_texto(s.get("acordaoDescricao") or ""))
+    if disp:
+        linhas.append(f"\n**Dispositivo (campo `acordaoDescricao`, literal):**\n{_truncar(disp, ORCAMENTO_CAMPO)}")
+    else:
+        linhas.append("\nDispositivo (`acordaoDescricao`): não informado pelo portal para esta decisão.")
+    link = _corrigir_link_pdf(s.get("linkArquivo") or "")
+    linhas.append(f"\nInteiro teor (PDF): {link}" if link else "\nInteiro teor: link não informado pelo portal.")
+    if resultado_pdf is not None and bruto_pdf is not None:
+        linhas.extend(_linhas_triagem_pdf(bruto_pdf, resultado_pdf))
+    elif aviso_pdf:
+        linhas.append(f"\n{aviso_pdf}")
+    else:
+        linhas.append("\n**Do PDF:** não lido (use `ler_inteiro_teor=true` para ver estrutura, fecho e linhas marcadas).")
+    linhas.append(
+        "\n---\nTRIAGEM é só para decidir se vale ler: NUNCA serve para aspas nem para escrever \"inteiro teor lido (PDF)\" numa ficha — "
+        "para isso, `modo=\"completo\"` com `ler_inteiro_teor=true`, ou `verificar_citacao_tcero` (sem rede quando há recibo). "
+        "As \"informações adicionais\" (IA do DEJUR) ficam de fora da triagem."
+    )
+    return linhas
+
+
+async def _pdf_para_triagem(s: dict) -> tuple[dict | None, str | None]:
+    """Baixa (ou pega do cache) e extrai o PDF de `s`, sem formatar o texto: (resultado, aviso). Mesmo
+    caminho de `_ler_inteiro_teor_pdf` (mesmas travas, mesmo cache), então `_texto_pdf_para_recibo` depois
+    reaproveita o cache e o recibo gravado é idêntico ao do modo completo."""
+    link = _corrigir_link_pdf(s.get("linkArquivo") or "")
+    if not link:
+        return None, "**Do PDF:** este acórdão não tem `linkArquivo` informado pelo portal."
+    chave = f"id:{s['idDecisao']}" if s.get("idDecisao") is not None else f"link:{hashlib.md5(link.encode()).hexdigest()}"
+    em_cache = _cache_pdf_ler(chave)
+    if em_cache is not None:
+        return em_cache, None
+    try:
+        conteudo = await _baixar_pdf(link)
+    except LeituraPdfFalhou as e:
+        return None, f"[LEITURA DE PDF NÃO REALIZADA — {e}]"
+    except Exception as e:
+        return None, f"[LEITURA DE PDF NÃO REALIZADA — falha inesperada ({type(e).__name__}: {e})]"
+    resultado = await _extrair_texto_pdf_async(conteudo)
+    if resultado.get("erro"):
+        return None, f"[LEITURA DE PDF NÃO REALIZADA — falha ao ler o PDF ({resultado['erro']})]"
+    _cache_pdf_gravar(chave, resultado)
+    return resultado, None
 
 
 # --------------------------------------------------------------------------- #
@@ -3406,7 +4579,11 @@ try:
             quando o próprio portal marca a decisão como cancelada ou vinculada a outra, e (com
             `grupos`) aviso quando um grupo só casou nas informações adicionais.
         """
-        return _finalizar_saida(await _buscar(texto_livre, numero_acordao, numero_processo, relator, orgao_julgador, pagina, por_pagina, detalhar, grupos, ordenar))
+        return _finalizar_saida(await _com_diario("buscar_jurisprudencia_tcero", {
+            "texto_livre": texto_livre, "grupos": grupos, "numero_acordao": numero_acordao, "numero_processo": numero_processo,
+            "relator": relator, "orgao_julgador": orgao_julgador, "pagina": pagina, "por_pagina": por_pagina,
+            "detalhar": detalhar, "ordenar": ordenar,
+        }, _buscar(texto_livre, numero_acordao, numero_processo, relator, orgao_julgador, pagina, por_pagina, detalhar, grupos, ordenar)))
 
     @mcp.tool()
     async def obter_acordao_tcero(
@@ -3414,6 +4591,7 @@ try:
         numero_acordao: str | None = None,
         numero_processo: str | None = None,
         ler_inteiro_teor: bool = False,
+        modo: str = "completo",
     ) -> str:
         """Traz o detalhe COMPLETO de uma decisão do TCE-RO: ementa integral, dispositivo
         (`acordaoDescricao`, quando o portal o preenche), informações adicionais e legislação
@@ -3468,6 +4646,15 @@ try:
             ler_inteiro_teor: Se true, baixa e extrai o texto do PDF do inteiro teor (relatório +
                 voto completos) — ver acima. Custa uma requisição de rede a mais (a um host
                 diferente do portal de busca) na primeira vez; cacheado depois.
+            modo: "completo" (padrão) ou "triagem". "triagem" = leitura BARATA para decidir se vale
+                ler a decisão inteira: citação, resultado, ementa inteira, dispositivo, órgão do
+                cadastro e link; e, com `ler_inteiro_teor=true`, do PDF só a estrutura (onde começam
+                acórdão, relatório, voto e votos de outros conselheiros, com a página aproximada),
+                o fecho e as linhas que os detectores já marcam (voto divergente, obiter,
+                transcrição, parecer do MPC, alegação da parte), cada uma com o lugar onde aparece.
+                SEM o texto corrido e SEM as informações adicionais de IA. A triagem NUNCA serve
+                para aspas nem para escrever "inteiro teor lido" numa ficha; o recibo que ela grava
+                é exatamente o que o modo completo gravaria (não rebaixa nem promove a verificação).
 
         Returns:
             Citação pronta, metadados (processo, natureza, objeto, assunto, jurisdicionado,
@@ -3482,7 +4669,10 @@ try:
             sai como `"inteiro teor lido em parte (PDF)"`, nomeando a decisão. Sem texto ou falha
             de rede: o aviso explícito, e nenhuma linha de verificação.
         """
-        return _finalizar_saida(await _obter_acordao(id_decisao, numero_acordao, numero_processo, ler_inteiro_teor))
+        return _finalizar_saida(await _com_diario("obter_acordao_tcero", {
+            "id_decisao": id_decisao, "numero_acordao": numero_acordao, "numero_processo": numero_processo,
+            "ler_inteiro_teor": ler_inteiro_teor, "modo": modo,
+        }, _obter_acordao(id_decisao, numero_acordao, numero_processo, ler_inteiro_teor, modo)))
 
     @mcp.tool()
     async def verificar_citacao_tcero(
@@ -3511,7 +4701,112 @@ try:
             Por decisão encontrada: ✅/❌, onde foi encontrado (ementa ou dispositivo), e os
             fragmentos sem correspondência quando falhar.
         """
-        return _finalizar_saida(await _verificar_citacao(id_decisao, numero_acordao, trecho))
+        return _finalizar_saida(await _com_diario("verificar_citacao_tcero", {
+            "id_decisao": id_decisao, "numero_acordao": numero_acordao, "trecho": trecho,
+        }, _verificar_citacao(id_decisao, numero_acordao, trecho)))
+
+    @mcp.tool()
+    async def buscar_recibos_tcero(
+        consulta: str = "",
+        grupos: list[list[str]] | None = None,
+        relator: str | None = None,
+        orgao: str | None = None,
+        limite: int = 10,
+    ) -> str:
+        """Busca SEM REDE nos recibos locais: o que esta máquina já leu do TCE-RO (cada
+        `obter_acordao_tcero` grava um recibo com ementa, dispositivo e, se lido, o texto do PDF).
+
+        Serve para reencontrar um acórdão já lido, ou procurar uma expressão no voto de um acórdão que
+        já passou por aqui, sem gastar consulta ao portal. NÃO é pesquisa no acervo do TCE-RO: zero
+        resultado aqui NUNCA é "não há jurisprudência" nem "não localizado" — para isso use
+        `buscar_jurisprudencia_tcero`. Procura na ementa, no dispositivo e no texto do PDF gravados;
+        nunca no texto de IA do DEJUR. Palavra inteira, com a mesma normalização do verificador
+        (caixa, acento, pontuação).
+
+        Args:
+            consulta: Palavras (todas exigidas) e "frases exatas entre aspas". `multa*` = prefixo.
+            grupos: Como em buscar_jurisprudencia_tcero: OU dentro do grupo, E entre grupos.
+            relator: Parte do nome do relator (sem caixa/acento).
+            orgao: "1ª Câmara", "2ª Câmara" ou "Pleno" (órgão do cadastro).
+            limite: Quantos mostrar (1 a 20; padrão 10).
+
+        Returns:
+            Quantos recibos existem e quantos atendem; por recibo: sigla/número, id, órgão, data da
+            sessão, relator, processo, citação pronta (sem a data do DOe, que o recibo não guarda),
+            link, a verificação gravada (ementa+dispositivo, PDF lido ou lido em parte), onde o termo
+            aparece (posição no julgado e página aproximada) e o trecho em volta.
+        """
+        return _finalizar_saida(await _com_diario("buscar_recibos_tcero", {
+            "consulta": consulta, "grupos": grupos, "relator": relator, "orgao": orgao, "limite": limite,
+        }, _async_const(_buscar_recibos(consulta, grupos, relator, orgao, limite))))
+
+    @mcp.tool()
+    async def diagnostico_erros_tcero(dias: int = 30, relatorio: bool = False) -> str:
+        """Resume as falhas que as ferramentas deste servidor registraram nesta máquina (rede, portal,
+        PDF, formato inesperado) e devolve o link do formulário de relato já preenchido.
+
+        O diário fica em `~/.tcero-jurisprudencia/erros.jsonl` (ou em `TCERO_MCP_DIR_ESTADO`) e guarda
+        SÓ dado técnico: ferramenta, tipo do erro, mensagem curta sanitizada, versão, sistema e data.
+        NUNCA o texto da busca, nome de parte, número de processo nem trecho citado. Não faz nenhuma
+        requisição.
+
+        Args:
+            dias: Período a resumir (1 a 365; padrão 30).
+            relatorio: Se true, acrescenta a tabela técnica dos últimos registros, pronta para colar numa issue.
+        """
+        return _finalizar_saida(_diagnostico_erros(dias, relatorio))
+
+    @mcp.tool()
+    async def linha_do_tempo_tcero(
+        texto_livre: str = "",
+        grupos: list[list[str]] | None = None,
+        relator: str | None = None,
+        orgao_julgador: str | None = None,
+        ano_inicio: int | None = None,
+        ano_fim: int | None = None,
+    ) -> str:
+        """Conta, ano a ano e por órgão julgador, as decisões que casam uma consulta, e mostra por ano as
+        duas mais pertinentes (citação e link). UMA consulta ao portal (zero se a mesma busca acabou de
+        ser feita: a resposta fica em cache por alguns minutos); o filtro de `grupos` é o mesmo da busca.
+
+        É contagem do que o portal devolveu para ESTA consulta, não tendência da Corte: o volume de
+        processos e a composição dos órgãos mudam de ano para ano. Use para saber QUANDO e em QUAL
+        órgão o tema aparece e ler as decisões dos dois períodos; mudança de proporção entre anos nunca
+        prova mudança de entendimento.
+
+        Args:
+            texto_livre: Como em buscar_jurisprudencia_tcero (OU entre palavras).
+            grupos: Como em buscar_jurisprudencia_tcero (OU dentro do grupo, E entre grupos).
+            relator: Nome do relator (exato; a ferramenta tenta aproximar pela lista do portal).
+            orgao_julgador: "1ª Câmara", "2ª Câmara" ou "Pleno".
+            ano_inicio: Primeiro ano da sessão a mostrar (recorte no cliente; não muda a consulta).
+            ano_fim: Último ano da sessão a mostrar.
+        """
+        return _finalizar_saida(await _com_diario("linha_do_tempo_tcero", {
+            "texto_livre": texto_livre, "grupos": grupos, "relator": relator, "orgao_julgador": orgao_julgador,
+            "ano_inicio": ano_inicio, "ano_fim": ano_fim,
+        }, _linha_do_tempo_async(texto_livre, grupos, relator, orgao_julgador, ano_inicio, ano_fim)))
+
+    @mcp.tool()
+    async def sugerir_termos_tcero(texto_livre: str = "", grupos: list[list[str]] | None = None) -> str:
+        """Sugere 10 a 20 palavras e pares de palavras para montar `grupos`, tirados das ementas e
+        dispositivos que casaram a sua consulta: frequentes entre as decisões que casaram e raros fora
+        delas. Resolve o problema do portal, que só casa as palavras que você escreveu: o vocabulário que
+        o TCE-RO usou para o mesmo assunto aparece aqui.
+
+        Usa a resposta da busca (zero requisição extra se a mesma consulta já foi feita há pouco; senão,
+        UMA consulta). É sugestão, não conclusão: confira que a nova busca traz o assunto, e NÃO cole a
+        lista inteira em `grupos` — escolha 2 a 4 que sejam mesmo sinônimos (medição: 3 sugestões em OU
+        derrubaram o topo em 4 de 6 consultas; harness/medicao-sugerir-termos-2026-10-15.md). Exclui o seu
+        próprio termo, nomes de relatores e palavras de ligação; ignora o texto de IA do DEJUR.
+
+        Args:
+            texto_livre: Termos soltos (OU no portal). Serve para descobrir o vocabulário do assunto.
+            grupos: Conceitos já montados (E entre grupos); as sugestões saem das decisões que casam os grupos.
+        """
+        return _finalizar_saida(await _com_diario("sugerir_termos_tcero", {
+            "texto_livre": texto_livre, "grupos": grupos,
+        }, _sugerir_termos_async(texto_livre, grupos)))
 
     @mcp.tool()
     async def diagnostico_ritmo_tcero() -> str:
@@ -4697,7 +5992,8 @@ if __name__ == "__main__":
         assert asyncio.run(_com_loop_sem_aviso()) is None  # env ligado (SEM_AVISO=1): nunca aparece
         _reset_versao_para_teste()
         globals()["_versao_nova_cache"] = "9.9.9"  # simula a tarefa de fundo já ter terminado
-        assert _linha_aviso_versao() == f"⬆️ Há versão nova (v9.9.9): {RELEASES_PAGINA}"
+        assert _linha_aviso_versao() == f"⬆️ Há versão nova (v9.9.9): {RELEASES_PAGINA}. {COMO_ATUALIZAR}"
+        assert "git pull" in _linha_aviso_versao() and ".mcpb" in _linha_aviso_versao()  # v1.6.0: as duas instruções de atualização
         assert "Há versão nova" in _finalizar_saida("texto qualquer")
         _reset_versao_para_teste()
         _reset_credito_para_teste()
@@ -4737,6 +6033,406 @@ if __name__ == "__main__":
         assert "Versão:" not in _formatar_erro_portal(ValueError("consulta sem nenhum filtro preenchido"), "Erro na consulta ao TCE-RO")
         _reset_versao_para_teste()
         _reset_credito_para_teste()
+
+        # =====================================================================================
+        # v1.6.0 (15/10/2026) — buscar_recibos · diário de erros · linha do tempo · sugerir termos
+        # · triagem · alertas que dizem onde. 100% offline: fixtures/ e fixtures/pdf/, diretórios
+        # temporários, _consultar_api e _baixar_pdf trocados por falsos e restaurados no fim.
+        # =====================================================================================
+        import shutil as _sh160
+        import tempfile as _tf160
+        _tmp160 = _tf160.mkdtemp(prefix="_selftest_v160_")
+        _env_estado_ant = os.environ.get("TCERO_MCP_DIR_ESTADO")
+        _dir_rec_ant = DIR_RECIBOS
+        _consultar_ant = globals()["_consultar_api"]
+        _baixar_ant = globals()["_baixar_pdf"]
+        _get_ant_160 = globals()["_get_com_retentativa"]
+        os.environ["TCERO_MCP_DIR_ESTADO"] = os.path.join(_tmp160, "estado")
+        globals()["DIR_RECIBOS"] = os.path.join(_tmp160, "recibos")
+        _MEMO_RECIBOS.clear()
+        try:
+            # ---------- 1. diário de erros ----------
+            assert _dir_estado() == os.path.join(_tmp160, "estado")
+            assert _ler_erros(30) == [] and "Nenhum erro registrado" in _diagnostico_erros(30)
+            _seg = "SEGREDO123"
+            _e1 = _registrar_erro(
+                "buscar_jurisprudencia_tcero",
+                erro=RuntimeError(f"Falha de rede repetida (ReadTimeout: https://papyrus.tcero.tc.br/api/espelho/buscar?textoLivre={_seg}&relatores=Fulano 'Joao {_seg}' proc 02603/22 id 987654321)"),
+                args={"texto_livre": _seg, "grupos": [[_seg, "x"], [_seg]], "relator": f"Fulano {_seg}", "pagina": 2, "por_pagina": 10, "detalhar": True},
+                ms=1234)
+            assert _e1 and _e1["tipo"] == "timeout" and _e1["ferramenta"] == "buscar_jurisprudencia_tcero" and _e1["versao"] == VERSAO, _e1
+            _bruto_erros = open(_arquivo_erros(), encoding="utf-8").read()
+            assert _seg not in _bruto_erros and "02603" not in _bruto_erros and "987654321" not in _bruto_erros, _bruto_erros
+            assert "textoLivre" not in _bruto_erros and "Joao" not in _bruto_erros, _bruto_erros  # consulta da URL e trecho entre aspas somem
+            assert _e1["args"]["pagina"] == 2 and _e1["args"]["detalhar"] is True and _e1["args"]["grupos"] == "2 grupo(s), 3 termo(s)", _e1["args"]
+            assert _e1["args"]["texto_livre"].startswith("<texto:") and _e1["args"]["relator"].startswith("<texto:"), _e1["args"]
+            assert (os.stat(_arquivo_erros()).st_mode & 0o777) == 0o600
+            assert (os.stat(os.path.dirname(_arquivo_erros())).st_mode & 0o777) == 0o700
+            assert "papyrus.tcero.tc.br/api/espelho/buscar" in _e1["mensagem"] and "?" not in _e1["mensagem"].split("buscar")[1][:3]
+            # tipos novos
+            assert _tipo_do_erro_diario("[LEITURA DE PDF NÃO REALIZADA — o host do PDF respondeu HTTP 404]") == "pdf_falha"
+            assert _tipo_do_erro_diario("PDF sem texto extraível (provável digitalização)") == "pdf_sem_texto"
+            assert _tipo_do_erro_diario("[EXTRAÇÃO PARCIAL — teto]") == "pdf_parcial"
+            assert _tipo_do_erro_diario("Resposta do portal em formato inesperado (sem a chave 'result')") == "formato_inesperado"
+            assert _tipo_do_erro_diario("O portal respondeu HTTP 503 de forma persistente") == "http_503"
+            # _falha_na_saida: só falha de ferramenta; validação de entrada e limitador não entram
+            assert _falha_na_saida("[LEITURA DE PDF NÃO REALIZADA — x]") == "falha"
+            assert _falha_na_saida("Erro na consulta ao TCE-RO: consulta sem nenhum filtro preenchido") is None
+            assert _falha_na_saida("Erro na consulta ao TCE-RO: x\n\nVersão: 1.6.0 · Sistema") == "falha"
+            assert _falha_na_saida("Erro ao consultar o portal do TCE-RO (KeyError): 'x'") == "falha"
+            assert _falha_na_saida("PDF sem texto extraível (provável digitalização)") == "parcial"
+            assert _falha_na_saida("tudo certo, 3 decisões") is None
+            _n0 = len(_ler_erros(30))
+
+            async def _ferr_pdf():
+                return "bloco\n[LEITURA DE PDF NÃO REALIZADA — falha de rede ao baixar o PDF (ConnectError)]\nmais"
+
+            async def _ferr_ok():
+                return "3 decisões"
+
+            async def _ferr_validacao():
+                return "Erro na consulta ao TCE-RO: relator 'X' casa com 2 nomes"
+
+            async def _ferr_ritmo():
+                return "Erro na consulta ao TCE-RO: Muitas consultas em pouco tempo (limite atual: 6 a cada 10m).\n\nVersão: 1.6.0"
+
+            async def _ferr_exc():
+                raise KeyError("x")
+
+            assert asyncio.run(_com_diario("obter_acordao_tcero", {"id_decisao": 98114, "ler_inteiro_teor": True}, _ferr_pdf())).startswith("bloco")
+            assert asyncio.run(_com_diario("a", {}, _ferr_ok())) == "3 decisões"
+            asyncio.run(_com_diario("a", {}, _ferr_validacao()))
+            asyncio.run(_com_diario("a", {}, _ferr_ritmo()))
+            try:
+                asyncio.run(_com_diario("verificar_citacao_tcero", {"trecho": _seg}, _ferr_exc()))
+                raise AssertionError("a exceção tem de ser relançada")
+            except KeyError:
+                pass
+            _novos = _ler_erros(30)[_n0:]
+            assert [e["ferramenta"] for e in _novos] == ["obter_acordao_tcero", "verificar_citacao_tcero"], _novos
+            assert _novos[0]["tipo"] == "pdf_falha" and _novos[0]["args"] == {"ler_inteiro_teor": True, "id_decisao": "int"}, _novos[0]
+            assert _seg not in open(_arquivo_erros(), encoding="utf-8").read()
+            # resumo, relatório, período, link de relato (só dado técnico)
+            _resumo = _diagnostico_erros(30)
+            assert "timeout" in _resumo and "pdf_falha" in _resumo and "buscar_jurisprudencia_tcero" in _resumo, _resumo
+            assert ISSUES_NOVA + "?title=" in _resumo and _seg not in _resumo, _resumo
+            assert "Relatório técnico" not in _resumo and "Relatório técnico" in _diagnostico_erros(30, True)
+            assert "inválido" in _diagnostico_erros(0) and "inválido" in _diagnostico_erros("x") and "inválido" in _diagnostico_erros(400)
+            assert _ler_erros(30, agora=time.time() + 40 * 86400) == []                  # tudo fora do período
+            # poda por tamanho: acima de MAX_BYTES mantém só as últimas MAX_LINHAS_ERROS
+            with open(_arquivo_erros(), "a", encoding="utf-8") as _fe:
+                _linha_gorda = json.dumps({"quando": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"), "versao": VERSAO,
+                                           "ferramenta": "x", "tipo": "outro", "mensagem": "m" * 300, "args": {}}) + "\n"
+                for _ in range(MAX_BYTES_ERROS // len(_linha_gorda) + 50):
+                    _fe.write(_linha_gorda)
+            _registrar_erro("x", erro=ValueError("gatilho da poda"))
+            _linhas_pos = [l for l in open(_arquivo_erros(), encoding="utf-8").read().split("\n") if l]
+            assert len(_linhas_pos) <= MAX_LINHAS_ERROS and "gatilho da poda" in _linhas_pos[-1], len(_linhas_pos)
+            assert os.path.getsize(_arquivo_erros()) <= MAX_BYTES_ERROS + 2000
+            # o diário nunca derruba a ferramenta: diretório impossível de criar → _registrar_erro devolve None
+            os.environ["TCERO_MCP_DIR_ESTADO"] = os.path.join(_arquivo_erros(), "dentro-de-arquivo")
+            assert _registrar_erro("x", erro=ValueError("y")) is None
+            os.environ["TCERO_MCP_DIR_ESTADO"] = os.path.join(_tmp160, "estado")
+            assert _sanitizar_erro('falhou em "texto da busca do usuario" e \'outro trecho longo\' e a@b.com 0123456/2026') == \
+                "falhou em «…» e «…» e <email> <nº>", _sanitizar_erro('falhou em "texto da busca do usuario" e \'outro trecho longo\' e a@b.com 0123456/2026')
+
+            # ---------- 2. buscar_recibos_tcero ----------
+            d02 = _ler("02_busca_numeroAcordao.json")
+            s_98114 = next(i["source"] for i in d_id["result"] if i["source"]["idDecisao"] == 98114)
+            s_96141 = next(i["source"] for i in d02["result"] if i["source"]["idDecisao"] == 96141)
+            s_96083 = next(i["source"] for i in d02["result"] if i["source"]["idDecisao"] == 96083)
+            with open(os.path.join(fx, "pdf", "98114.pdf"), "rb") as _fp:
+                _r98114 = _extrair_texto_pdf(_fp.read())
+            with open(os.path.join(fx, "pdf", "96141.pdf"), "rb") as _fp:
+                _r96141 = _extrair_texto_pdf(_fp.read())
+            _gravar_recibo_tcero(s_98114, texto_pdf=_r98114["texto"], texto_pdf_completo=not _r98114["parcial"])
+            _gravar_recibo_tcero(s_96141, texto_pdf=_r96141["texto"], texto_pdf_completo=not _r96141["parcial"])
+            _s_sintetico = {"idDecisao": 11111, "sigla": "AC2-TC", "numero": "00001/26", "processo": "00001/26", "relator": "MARIA SINTETICA",
+                            "orgaoJulgador": "2ª Câmara", "dataSessao": "2026-02-02T00:00:00", "linkArquivo": "//tce.ro.gov.br/AbrirPdfConvidado/aaa",
+                            "ementa": "Julgados IMPROCEDENTES os pedidos. Multas aplicadas ao gestor; reincidência afastada.",
+                            "acordaoDescricao": "<p>Aplicar multa de R$ 1.000,00 ao responsável.</p>",
+                            "informacoesAdicionais": "<p>ZZXQWIA texto de IA que não pode ser achado pela busca local.</p>"}
+            _gravar_recibo_tcero(_s_sintetico)
+            assert _ler_recibo_tcero(11111)["texto_pdf_completo"] is None
+            _MEMO_RECIBOS.clear()
+            _lista, _ign = _listar_recibos_tcero()
+            assert len(_lista) == 3 and _ign == 0, (len(_lista), _ign)
+            # a busca é síncrona e não toca rede: com a API explodindo, funciona do mesmo jeito
+            async def _api_explode(params, operacao):
+                raise AssertionError("buscar_recibos NÃO pode consultar a API")
+            globals()["_consultar_api"] = _api_explode
+            _b1 = _buscar_recibos("licitação", None, None, None, 10)
+            assert "3 de 3" in _b1 or "de 3 decisão" in _b1, _b1[:400]
+            assert "ZERO requisição" in _b1 and "NUNCA" in _b1 and "não há jurisprudência" in _b1, _b1[:600]
+            assert "2 com o PDF lido, 1 só com ementa + dispositivo" in _b1, _b1[:500]
+            # palavra INTEIRA: "procedentes" não casa dentro de "IMPROCEDENTES"; "improcedentes" casa; "multa*" pega "Multas"
+            assert "0 de 3" in _buscar_recibos("procedentes", None, None, None)
+            assert "1 de 3" in _buscar_recibos("improcedentes", None, None, None)
+            assert "1 de 3" in _buscar_recibos('"aplicadas ao gestor"', None, None, None)
+            assert "0 de 3" in _buscar_recibos('"gestor aplicadas"', None, None, None)   # frase: ordem exigida
+            assert _buscar_recibos("multa*", None, None, None).split("\n")[0].startswith("**Recibos locais do TCE-RO — ")
+            # normalização igual à do verificador: caixa, acento, pontuação
+            assert "1 de 3" in _buscar_recibos('"REINCIDENCIA afastada"', None, None, None)
+            # texto de IA NUNCA é pesquisado
+            assert "0 de 3" in _buscar_recibos("ZZXQWIA", None, None, None)
+            # grupos (OU dentro, E entre) e filtros
+            assert "1 de 3" in _buscar_recibos("", [["improcedentes", "inexistentepalavra"], ["multas"]], None, None)
+            assert "0 de 3" in _buscar_recibos("", [["improcedentes"], ["inexistentepalavra"]], None, None)
+            assert "1 de 3" in _buscar_recibos("multa", None, "sintetica", None)             # relator sem caixa/acento
+            assert "0 de 3" in _buscar_recibos("multa", None, "sintetica", "Pleno")           # órgão do cadastro
+            _bp = _buscar_recibos("", None, None, "pleno")
+            assert "2ª Câmara" not in _bp.split("\n")[0] and "órgão «Pleno»" in _bp.split("\n")[0], _bp.split("\n")[0]
+            assert "BUSCA LOCAL NÃO REALIZADA" in _buscar_recibos("", None, None, None)
+            assert "BUSCA LOCAL NÃO REALIZADA" in _buscar_recibos("de", None, None, None)  # só palavra vazia = sem critério
+            # conteúdo do resultado: citação pronta, link, verificação gravada, onde, trecho
+            _bv = _buscar_recibos("licitatório", None, None, "Pleno", 1)
+            assert "APL-TC 00055/26 · id 98114" in _bv and "Citação: (TCE-RO - APL-TC 00055/26, Rel. JOSÉ EULER" in _bv, _bv[:900]
+            assert "Link: https://tcero.tc.br/AbrirPdfConvidado/" in _bv and "Verificação gravada no recibo: inteiro teor lido (PDF)" in _bv, _bv
+            assert "Onde: " in _bv and "«…" in _bv and "SEM a data do DOe" in _bv, _bv
+            assert "DOe 0" not in _bv.split("Citação:")[1].split("\n")[0]  # a citação do recibo não inventa DOe
+            _bs = _buscar_recibos("multa", None, None, None)
+            assert "só ementa + dispositivo do cadastro (PDF não lido)" in _bs, _bs
+            # limite e ordenação (mais pertinente primeiro; empate por data)
+            _bl = _buscar_recibos("multa", None, None, None, 1)
+            assert "\n1. " in _bl and "\n2. " not in _bl, _bl[:300]
+            assert "mais " in _bl and "aumente `limite`" in _bl, _bl[-300:]      # há mais de um recibo com "multa": o aviso de corte aparece
+            # recibo adulterado fica de fora e é contado
+            _cam_96141 = _caminho_recibo_tcero(96141)
+            _dados_a = json.load(open(_cam_96141, encoding="utf-8"))
+            _dados_a["texto"] += " ADULTERADO"
+            json.dump(_dados_a, open(_cam_96141, "w", encoding="utf-8"))
+            _MEMO_RECIBOS.clear()
+            _ba = _buscar_recibos("licitação", None, None, None)
+            assert "1 arquivo(s) da pasta de recibos ficaram de fora" in _ba and "id 96141" not in _ba, _ba[:600]
+            # pasta inexistente: zero recibos, mensagem clara, nada quebra
+            assert "0 de 0" in _buscar_recibos("qualquer", None, None, None, 10, pasta=os.path.join(_tmp160, "nao-existe"))
+            # o recibo em disco NÃO ganhou nenhum campo novo (contrato com o lint da peticao-rg)
+            _campos_esperados = {"tribunal", "id_documento", "sigla", "numero", "processo", "nr_processo", "relator", "orgao_cadastro",
+                                 "data_sessao", "link", "gravado_em", "fonte", "texto", "texto_pdf_completo", "texto_ia_dejur",
+                                 "texto_transcrito", "texto_divergente", "texto_alegacao_parte", "texto_parecer_mpc", "sha256", "sha256_campos"}
+            assert set(json.load(open(_caminho_recibo_tcero(98114), encoding="utf-8")).keys()) == _campos_esperados
+            # via ferramenta (com o diário em volta)
+            assert "Recibos locais do TCE-RO" in asyncio.run(_com_diario("buscar_recibos_tcero", {"consulta": "x"}, _async_const(_buscar_recibos("multa", None, None, None))))
+            globals()["_consultar_api"] = _consultar_ant
+
+            # ---------- 3. linha do tempo ----------
+            _its = [{"source": {"idDecisao": i, "dataSessao": f"{ano}-03-01T00:00:00", "orgaoJulgador": org, "sigla": "AC1-TC", "numero": f"{i:05d}/{str(ano)[2:]}",
+                                "ementa": f"multa {'reincidência' if i % 2 else ''} tema{i}", "linkArquivo": f"//tce.ro.gov.br/AbrirPdfConvidado/h{i}"}}
+                    for i, (ano, org) in enumerate([(2020, "Pleno"), (2020, "1ª Câmara"), (2020, "Pleno"), (2021, "Pleno"), (2022, "2ª Câmara"), (2022, "2ª Câmara"),
+                                                    (2022, "Pleno"), (2022, "Pleno"), (2022, "1ª Câmara")], start=1)]
+            _its.append({"source": {"idDecisao": 99, "ementa": "multa reincidência sem sessão", "orgaoJulgador": "Pleno"}})
+            _lt = "\n".join(_linha_do_tempo(_its, ["multa", "reincidência"], filtros="f", total_bruto=50))
+            assert "10 decisão(ões)" in _lt and "(de 50 no portal antes do filtro de grupos)" in _lt, _lt[:300]
+            assert "| 2022 | 5 | " in _lt and "| 2020 | 3 | " in _lt and "| 2021 | 1 | " in _lt and "| sem data de sessão | 1 | " in _lt, _lt
+            assert _lt.index("| 2022 |") < _lt.index("| 2021 |") < _lt.index("| 2020 |")        # anos do mais recente para o mais antigo
+            assert _lt.count("\n- 2022 · id") == 2 and _lt.count("\n- 2020 · id") == 2 and _lt.count("\n- 2021 · id") == 1, _lt
+            assert "não a frequência com que a Corte decide o tema nem tendência" in _lt and "AbrirPdfConvidado/h" in _lt
+            _lt2 = "\n".join(_linha_do_tempo(_its, ["multa"], 2021, 2022))
+            assert "2020" not in _lt2.split("**As ")[0] and "sem data de sessão" not in _lt2 and "6 decisão(ões)" in _lt2, _lt2[:400]
+            # a linha mais pertinente do ano vem primeiro (reincidência = 2 termos; sem = 1)
+            # ponta a ponta com a resposta real de 1.141 decisões (fixture), UMA requisição, mesmos parâmetros da busca
+            d_c2 = _ler("exp_C2_controle_or.json")
+            _chamadas160: list = []
+
+            class _RespFake160:
+                status_code = 200
+
+                def __init__(self, d):
+                    self._d = d
+                    self.content = b"x" * 1000
+
+                def json(self):
+                    return self._d
+
+            async def _get_c2(cli, url, params, operacao):
+                _chamadas160.append(dict(params))
+                return _RespFake160(d_c2)
+            _get_ant = globals()["_get_com_retentativa"]
+            globals()["_get_com_retentativa"] = _get_c2     # _consultar_api REAL (com cache) sobre uma resposta falsa
+            _cache_limpar()
+            _lt3 = asyncio.run(_linha_do_tempo_async(None, [["reincidência"], ["multa"]], None, None, None, None))
+            assert len(_chamadas160) == 1, _chamadas160
+            _n_c2, _ = _filtrar_por_grupos(d_c2["result"], _grupos_validos([["reincidência"], ["multa"]]))
+            assert f"{len(_n_c2)} decisão(ões) que a consulta devolveu (de {len(d_c2['result'])} no portal antes do filtro de grupos)" in _lt3, _lt3[:300]
+            assert len(_n_c2) == 59, len(_n_c2)  # 59, não os 61 da docstring de buscar_jurisprudencia_tcero (divergência já explicada mais acima neste selftest)
+            _soma = sum(int(l.split("|")[2]) for l in _lt3.split("\n") if re.match(r"^\| (\d{4}|sem data de sessão) \|", l))
+            assert _soma == len(_n_c2), (_soma, len(_n_c2))
+            # os parâmetros são IDÊNTICOS aos de _buscar (então o cache de uma busca vale para a linha do tempo)
+            _chamadas160.clear()
+            asyncio.run(_buscar(None, None, None, None, None, 1, 10, False, [["reincidência"], ["multa"]]))
+            assert len(_chamadas160) == 0, "a linha do tempo tem de ter deixado a resposta no cache de _buscar"
+            _cache_limpar()
+            asyncio.run(_buscar(None, None, None, None, None, 1, 10, False, [["reincidência"], ["multa"]]))
+            _params_busca = dict(_chamadas160[-1])
+            _chamadas160.clear(); _cache_limpar()
+            asyncio.run(_linha_do_tempo_async(None, [["reincidência"], ["multa"]], None, None, None, None))
+            assert _chamadas160[-1] == _params_busca, (_chamadas160[-1], _params_busca)
+            # validações sem rede
+            _chamadas160.clear()
+            assert "inválidos" in asyncio.run(_linha_do_tempo_async("multa", None, None, None, "abc", None))
+            assert "fora do intervalo" in asyncio.run(_linha_do_tempo_async("multa", None, None, None, 2025, 2020))
+            assert "Informe pelo menos um critério" in asyncio.run(_linha_do_tempo_async("", None, None, None, None, None))
+            assert _chamadas160 == []
+            # erro do portal vira mensagem com rodapé, nunca exceção
+            async def _get_falha(cli, url, params, operacao):
+                raise PortalRecusou("O portal respondeu HTTP 503 de forma persistente")
+            globals()["_get_com_retentativa"] = _get_falha
+            _cache_limpar()
+            assert "Erro na consulta ao TCE-RO" in asyncio.run(_linha_do_tempo_async("multa", None, None, None, None, None))
+
+            # ---------- 4. sugerir_termos ----------
+            def _doc_v(i, ementa, ia=""):
+                return {"source": {"idDecisao": i, "ementa": ementa, "relator": "FULANO ZEBRINHO", "informacoesAdicionais": ia, "acordaoDescricao": "",
+                                   "dataSessao": "2026-01-01T00:00:00"}}
+            _fundo_t = {"N": 1000, "df": {"comum": 900, "multa": 300, "gamaxis": 5, "ementa": 800}, "df2": {}}
+            _casadas_t = [_doc_v(i, "multa por gamaxis e ementa comum foo", ia="iaonlyword iaonlyword") for i in range(10)]
+            _rest_t = [_doc_v(100 + i, "comum outra coisa qualquer texto") for i in range(20)]
+            _rv = _sugerir_vocabulario(_casadas_t, _rest_t, ["multa"], _fundo_t, {"zebrinho"})
+            _pal = [w for w, _ in _rv["termos"]]
+            assert "gamaxis" in _pal and "multa" not in _pal and "comum" not in _pal and "iaonlyword" not in _pal and "zebrinho" not in _pal, _rv
+            assert _rv["usou_fundo"] and _rv["usou_restante"], _rv
+            assert _sugerir_vocabulario(_casadas_t[:5], _rest_t, ["multa"], _fundo_t)["pouco"] is True      # menos de 8 casadas
+            assert _sugerir_vocabulario(_casadas_t, _rest_t[:5], ["multa"], None)["sem_base"] is True        # sem fundo e sem restante
+            assert "mínimo 8" in "\n".join(_bloco_vocabulario({"pouco": True, "n": 3}, 1, 1, 10, ""))
+            # fundo ausente/ruim: _carregar_fundo devolve None sem exceção
+            os.environ["TCERO_MCP_FUNDO_VOCAB"] = os.path.join(_tmp160, "nao-existe.json")
+            _fundo_cache.clear()
+            assert _carregar_fundo() is None
+            os.environ.pop("TCERO_MCP_FUNDO_VOCAB")
+            _fundo_cache.clear()
+            _fundo_real = _carregar_fundo()
+            assert _fundo_real is not None and _fundo_real["N"] >= 300 and _fundo_real["df"].get("licitacao", 0) > 100, "fundo_vocabulario.json ausente ou inválido"
+            # ponta a ponta com a fixture de 1.141 decisões: 10 a 20 sugestões, sem o termo pedido, sem nome de relator
+            globals()["_get_com_retentativa"] = _get_c2
+            _cache_limpar(); _chamadas160.clear()
+            _sg = asyncio.run(_sugerir_termos_async("reincidência multa", None))
+            assert len(_chamadas160) == 1, _chamadas160
+            _linhas_sg = [l for l in _sg.split("\n") if l.startswith("- Palavras") or l.startswith("- Pares")]
+            _itens_sg = re.findall(r"(?:«([^»]+)»|(?:^|, )([a-z]+)) \(\d+/\d+\)", " ".join(_linhas_sg))
+            _lista_sg = [a or b for a, b in _itens_sg]
+            assert 10 <= len(_lista_sg) <= 20, (len(_lista_sg), _sg)
+            assert not any(("reincid" in x or x.split(" ")[0] == "multa" or x == "multa") for x in _lista_sg), _lista_sg
+            assert "zero requisição extra" in _sg and "indício e não conclusão" in _sg and "fundo local" in _sg, _sg[:500]
+            _nomes_rel = set()
+            for _it in d_c2["result"]:
+                _nomes_rel.update(_RE_PALAVRA_VOCAB.findall(_fold(_it["source"].get("relator") or "")))
+            assert not any(w in _nomes_rel for x in _lista_sg for w in x.split(" ")), [x for x in _lista_sg if any(w in _nomes_rel for w in x.split(" "))]
+            # a mesma consulta, com a resposta já em cache: nenhuma requisição nova
+            _chamadas160.clear()
+            asyncio.run(_sugerir_termos_async("reincidência multa", None))
+            assert _chamadas160 == []
+            assert "Informe pelo menos um critério" in asyncio.run(_sugerir_termos_async("", None))
+            assert "Informe `texto_livre` ou `grupos`" in asyncio.run(_sugerir_termos_async("de ao", None))
+
+            globals()["_get_com_retentativa"] = _get_ant
+            # ---------- 5. triagem ----------
+            globals()["_consultar_api"] = lambda params, operacao: _async_const(d_id)
+            _cache_limpar(); _cache_pdf_limpar()
+            _chamadas_pdf: list = []
+            with open(os.path.join(fx, "pdf", "98114.pdf"), "rb") as _fp:
+                _bytes_98114 = _fp.read()
+
+            async def _baixar_160(url):
+                _chamadas_pdf.append(url)
+                return _bytes_98114
+            globals()["_baixar_pdf"] = _baixar_160
+            assert "modo inválido" in asyncio.run(_obter_acordao(98114, None, None, False, "xyz")) and _chamadas_pdf == []
+            _sh160.rmtree(DIR_RECIBOS, ignore_errors=True); _MEMO_RECIBOS.clear()
+            _tri0 = asyncio.run(_obter_acordao(98114, None, None, False, "triagem"))        # sem PDF
+            assert "TRIAGEM · APL-TC 00055/26 · id 98114" in _tri0 and "Citação: (TCE-RO - APL-TC 00055/26" in _tri0, _tri0[:300]
+            assert "Ementa (integral" in _tri0 and "Órgão julgador (cadastro): Pleno" in _tri0 and "Inteiro teor (PDF): https://tcero.tc.br/" in _tri0
+            assert "não lido (use `ler_inteiro_teor=true`" in _tri0 and _chamadas_pdf == [], _tri0[-400:]
+            assert "NUNCA serve para aspas" in _tri0 and "Inteiro teor (PDF, extraído)" not in _tri0
+            assert "Informações adicionais" not in _tri0 and "GERADO COM APOIO DE IA" not in _tri0
+            assert _ler_recibo_tcero(98114)["texto_pdf_completo"] is None                    # recibo de ementa, como no modo completo
+            _tri1 = asyncio.run(_obter_acordao(98114, None, None, True, "triagem"))        # com PDF
+            assert len(_chamadas_pdf) == 1, _chamadas_pdf
+            assert "**Do PDF (sem o texto corrido)" in _tri1 and "- Estrutura: ACÓRDÃO" in _tri1 and "VOTO do relator (p. ~" in _tri1, _tri1[-2500:]
+            assert "- Fecho (literal" in _tri1 and "ACORDAM os Senhores Conselheiros do Pleno" in _tri1 and "Órgão que o fecho declara: Pleno" in _tri1
+            assert "Proc.: 02603/22" not in _tri1.split("- Fecho")[1].split("\n")[0]       # cabeçalho de página não vaza no fecho
+            assert "- Linhas que os detectores marcam" in _tri1 and "parecer do MPC / corpo técnico" in _tri1 and "(p. ~" in _tri1
+            assert "Relatório e voto" not in _tri1 and "Inteiro teor (PDF, extraído)" not in _tri1
+            assert "NUNCA serve para aspas" in _tri1
+            _full = asyncio.run(_obter_acordao(98114, None, None, True, "completo"))
+            assert len(_tri1) < 0.2 * len(_full), (len(_tri1), len(_full))                     # leitura barata
+            assert len(_chamadas_pdf) == 1, "o modo completo reaproveita o cache do PDF da triagem"
+            # o recibo gravado pela triagem é IDÊNTICO ao do modo completo (não rebaixa nem promove)
+            _sh160.rmtree(DIR_RECIBOS, ignore_errors=True); _MEMO_RECIBOS.clear(); _cache_pdf_limpar()
+            asyncio.run(_obter_acordao(98114, None, None, True, "triagem"))
+            _rec_tri = json.load(open(_caminho_recibo_tcero(98114), encoding="utf-8"))
+            _sh160.rmtree(DIR_RECIBOS, ignore_errors=True); _cache_pdf_limpar()
+            asyncio.run(_obter_acordao(98114, None, None, True, "completo"))
+            _rec_comp = json.load(open(_caminho_recibo_tcero(98114), encoding="utf-8"))
+            assert _recibo_integro(_rec_tri) and _recibo_integro(_rec_comp)
+            for _k in ("gravado_em", "sha256_campos"):      # o hash dos campos inclui a hora da gravação
+                _rec_tri.pop(_k); _rec_comp.pop(_k)
+            assert _rec_tri == _rec_comp, [k for k in _rec_tri if _rec_tri[k] != _rec_comp.get(k)]
+            assert _rec_tri["texto_pdf_completo"] is not None and "ACORDAM" in _rec_tri["texto"]
+            # triagem SEM PDF depois de um recibo COM PDF não rebaixa (a proteção de _gravar_recibo_tcero vale)
+            asyncio.run(_obter_acordao(98114, None, None, False, "triagem"))
+            _rec_dep = json.load(open(_caminho_recibo_tcero(98114), encoding="utf-8"))
+            assert _rec_dep["texto_pdf_completo"] is not None and "ACORDAM" in _rec_dep["texto"], "triagem sem PDF rebaixou o recibo"
+            assert _ler_recibo_tcero(98114) is not None  # hash íntegro
+            # falha de rede no PDF: aviso explícito, nunca "não encontrado", e o diário anota
+            async def _baixar_falha160(url):
+                raise LeituraPdfFalhou("falha de rede ao baixar o PDF (ConnectError simulado)")
+            globals()["_baixar_pdf"] = _baixar_falha160
+            _cache_pdf_limpar(); _sh160.rmtree(DIR_RECIBOS, ignore_errors=True)
+            _tri_f = asyncio.run(_com_diario("obter_acordao_tcero", {"modo": "triagem"}, _obter_acordao(98114, None, None, True, "triagem")))
+            assert "[LEITURA DE PDF NÃO REALIZADA" in _tri_f and "não encontrada" not in _tri_f and "Ementa (integral" in _tri_f, _tri_f[-500:]
+            assert any(e["tipo"] == "pdf_falha" and e["args"].get("modo") == "triagem" for e in _ler_erros(1)), _ler_erros(1)[-2:]
+            # PDF que só cabe em parte: o estado aparece na triagem
+            _res_parc = {"texto": "x " * 10, "paginas": 400, "paginas_lidas": 300, "parcial": True, "motivo_parcial": "teto de 400 páginas", "chars_nao_espaco": 10,
+                         "sem_texto": False, "paginas_sem_texto": 0, "erro": None}
+            assert "extração PARCIAL (teto de 400 páginas)" in "\n".join(_linhas_triagem_pdf("texto", _res_parc))
+            assert "sem texto extraível" in "\n".join(_linhas_triagem_pdf("", {"sem_texto": True}))
+
+            # ---------- 6. alertas que dizem onde ----------
+            _t_ob = ("O relator examinou o recurso. Ainda que se admitisse a tese do recorrente, o prazo prescricional teria transcorrido "
+                     "integralmente no caso concreto dos autos, razão pela qual nada mudaria no resultado final do julgamento.")
+            _r_ob = _verificar_trecho({"ementa": _t_ob}, "o prazo prescricional teria transcorrido integralmente no caso concreto dos autos")
+            _al_ob = [a for a in _r_ob["alertas"] if a.startswith("OBITER DICTUM?")]
+            assert _al_ob and "A frase: «Ainda que se admitisse a tese do recorrente," in _al_ob[0] and "» + o trecho." in _al_ob[0], _r_ob["alertas"]
+            assert "ainda que se admitisse" in _al_ob[0].split("sob «")[1].split("»")[0].lower()
+            _r_ob2 = _verificar_trecho({"ementa": _t_ob}, "Ainda que se admitisse a tese do recorrente, o prazo prescricional teria transcorrido integralmente")
+            _al_ob2 = [a for a in _r_ob2["alertas"] if a.startswith("OBITER DICTUM?")]
+            assert _al_ob2 and "A marca está no começo do próprio trecho citado." in _al_ob2[0], _r_ob2["alertas"]
+            assert _obiter_antes(_norm1(_t_ob), _t_ob.index("o prazo"), _t_ob.index("dos autos") + 9, _t_ob).startswith("ainda que se admitisse")
+            # voto de outro conselheiro: o título e a página aparecem (PDF real 77649, 35 páginas)
+            with open(os.path.join(fx, "pdf", "77649.pdf"), "rb") as _fp:
+                _r77649 = _extrair_texto_pdf(_fp.read())
+            _t77 = _r77649["texto"]
+            _est77 = _estrutura_pdf_tcero(_t77)
+            _outros77 = [(r, p, t) for r, p, t in _est77 if r == "VOTO de outro conselheiro"]
+            assert _outros77 and _outros77[0][1].startswith("p. ~"), _est77
+            _p_outro = _t77.index(_outros77[0][2]) + len(_outros77[0][2]) + 400
+            _pos_outro = _posicao_tcero(_t77, _p_outro)
+            assert _pos_outro.startswith("VOTO de outro conselheiro (título: «") and "não é o voto condutor" in _pos_outro, _pos_outro
+            assert _pagina_pdf_tcero(_t77, _p_outro).startswith("p. ~") and _pagina_pdf_tcero("sem cabeçalho de página", 5) == "" and _pagina_pdf_tcero("", 0) == ""
+            # a página é a do cabeçalho "N de M" anterior ao ponto
+            assert _pagina_pdf_tcero(_t77, 0) in ("", "p. ~1 de 35 do PDF") and _pagina_pdf_tcero(_t77, len(_t77) - 1).startswith("p. ~3")
+            # _excertos_raw (recibo) continua devolvendo só texto; a variante com posição bate item a item
+            _com_pos = _excertos_raw_com_pos(_t77, _RE_PARECER_MPC_RAW)
+            assert [e for _p, e in _com_pos] == _excertos_raw(_t77, _RE_PARECER_MPC_RAW) and all(isinstance(p, int) for p, _ in _com_pos)
+
+            # ---------- 7. atualização ----------
+            assert "git pull" in COMO_ATUALIZAR and ".mcpb" in COMO_ATUALIZAR and "reiniciar" in COMO_ATUALIZAR and "dois cliques" in COMO_ATUALIZAR
+            assert VERSAO == "1.6.0"
+            # nenhuma saída das ferramentas novas vaza a informação de IA do DEJUR no vocabulário/triagem
+            print("v1.6.0 selftest: recibos, diário de erros, linha do tempo, sugerir termos, triagem e alertas-onde OK")
+        finally:
+            globals()["_consultar_api"] = _consultar_ant
+            globals()["_baixar_pdf"] = _baixar_ant
+            globals()["_get_com_retentativa"] = _get_ant_160
+            globals()["DIR_RECIBOS"] = _dir_rec_ant
+            if _env_estado_ant is None:
+                os.environ.pop("TCERO_MCP_DIR_ESTADO", None)
+            else:
+                os.environ["TCERO_MCP_DIR_ESTADO"] = _env_estado_ant
+            _MEMO_RECIBOS.clear()
+            _cache_limpar()
+            _cache_pdf_limpar()
+            _sh160.rmtree(_tmp160, ignore_errors=True)
 
         print("selftest offline OK")
 
